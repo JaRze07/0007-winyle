@@ -1,23 +1,42 @@
-# Winyle
+# Project7 - Winyle
 
 A vinyl-collection cataloguing app. Pack records into boxes, and the app tracks
 exactly which box and which slot each record sits in — so you can always find it
 again. Installable on a phone (PWA), with an optional online database so your
 collection syncs across devices.
 
-Adding a record uses three escalating steps:
+## Adding records
 
-1. **Barcode** — scan the sleeve's barcode; looks it up by barcode (MusicBrainz)
-   and fills artist / title / year / cover instantly.
-2. **Find album** — type what you know; searches iTunes + MusicBrainz and pulls
-   the cover, year and genre. (Optionally upgradeable to a Claude-powered lookup,
-   see below.)
+**Packing a whole box — serial scanning.** The camera stays open. Scan a barcode,
+move to the next record, scan again — you are never made to wait for a match.
+Each record is looked up in the background while you keep going, and you check
+the whole batch at the end. Anything that couldn't be identified stays in the
+list as a placeholder in its own position, so you can re-scan it or type it in
+without losing track of the packing order.
+
+**Four at a time.** Lay four sleeves out in a square and take one photo. They are
+read top-left, top-right, bottom-left, bottom-right and go into the queue in that
+order.
+
+**One at a time**, when that's all you need:
+
+1. **Barcode** — checks MusicBrainz and iTunes, trying every way the number can
+   be written (UPC-A, EAN-13, UPC-E, zero-padded), and prefers an album both
+   databases agree on.
+2. **Cover photo** — identifies the album from the sleeve, then **compares the
+   actual artwork** against the candidates before accepting one. If it isn't
+   certain, it shows you the covers to choose from rather than guessing.
 3. **Manual** — type the details yourself and photograph the sleeve.
+
+Records can be edited afterwards, including placeholders left by a bulk session.
 
 Other features: drag-to-reorder within a box, box cover = the most recently added
 record, a swipe carousel ("what to listen to") filtered by genre/mood that tells
 you the box and slot, and search. Genres are not a fixed list — they come from the
 records you actually own.
+
+> **Records pressed before the 1980s usually have no barcode at all.** For those,
+> the cover photo is the reliable route.
 
 ---
 
@@ -58,13 +77,26 @@ are stored as part of the data (base64 for photos, URLs for fetched art).
 > The schema's policies give the anon key full read/write — fine for a private
 > personal app. Add Supabase Auth + per-user policies before exposing it publicly.
 
+## Optional: better vinyl barcode coverage (Discogs)
+
+Discogs has by far the best vinyl barcode data, but its API needs a token, which
+must not sit in the browser. The app already calls `WORKER_URL + '/api/discogs?barcode=…'`
+and silently ignores it when the route doesn't exist, so adding that route to your
+Worker is enough to switch it on. It should return Discogs' own search response
+(`{ results: [{ title, year, genre, thumb, cover_image }] }`).
+
 ## Optional: Claude-powered "Find album"
 
-Step 2 works without any key (iTunes/MusicBrainz). For smarter matching of messy
-or partial input, set `CONFIG.CLAUDE_PROXY` to a small server endpoint that holds
-your Anthropic API key and forwards the request (the key must **not** live in the
-browser). The endpoint receives `{ "query": "artist — title" }` and should return
-`{ "artist","title","year","genre" }`.
+Text search works without any key (iTunes/MusicBrainz). For smarter matching of
+messy or partial input — and for identifying a record from a photo of its sleeve —
+set `CONFIG.CLAUDE_PROXY` to a small server endpoint that holds your Anthropic API
+key and forwards the request (the key must **not** live in the browser). The
+endpoint receives `{ "query": "artist — title" }`, optionally with an `image`, and
+should return `{ "artist","title","year","genre" }`.
+
+Note that the photo route does not simply trust that answer: it uses it to gather
+candidates, then compares their artwork with your photo and only accepts a clear
+winner.
 
 Minimal Cloudflare Worker example:
 ```js

@@ -161,6 +161,49 @@
   .stars{color:var(--amber);font-size:13px;letter-spacing:1px}
   .nbrs{font-size:11px;color:var(--faint);margin-top:4px;line-height:1.4}
   .nbr{opacity:.7}
+  /* --- batch capture --- */
+  .bstrip{position:absolute;bottom:calc(96px + env(safe-area-inset-bottom));z-index:3;display:flex;gap:7px;width:92%;max-width:440px;overflow-x:auto;padding:4px 2px;scrollbar-width:none}
+  .bstrip::-webkit-scrollbar{display:none}
+  .bchip{flex:0 0 auto;width:46px;height:46px;border-radius:10px;border:2px solid rgba(255,255,255,.35);background:#000 center/cover no-repeat;position:relative;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;color:#fff}
+  .bchip .st{position:absolute;right:-3px;bottom:-3px;width:16px;height:16px;border-radius:50%;font-size:10px;display:flex;align-items:center;justify-content:center;background:var(--ink-2);border:1.5px solid #000}
+  .bchip.pending .st{background:var(--amber);color:#231903}
+  .bchip.ok .st{background:var(--keep);color:#12200a}
+  .bchip.none .st,.bchip.error .st{background:var(--oxblood);color:#fff}
+  .bcount{position:absolute;top:calc(14px + env(safe-area-inset-top));left:16px;z-index:4;background:rgba(0,0,0,.6);border-radius:999px;padding:7px 14px;font-size:15px;font-weight:700;color:#fff}
+  .bflash{position:absolute;inset:0;z-index:6;background:rgba(226,166,62,.35);pointer-events:none;animation:bf .45s ease-out forwards}
+  @keyframes bf{to{opacity:0}}
+  .scanseg{position:absolute;top:calc(66px + env(safe-area-inset-top));z-index:4;display:flex;background:rgba(0,0,0,.6);border-radius:999px;padding:4px;gap:4px}
+  .scanseg button{border:none;background:transparent;color:#ddd;font-family:var(--body);font-size:14px;font-weight:600;padding:8px 16px;border-radius:999px;cursor:pointer}
+  .scanseg button.on{background:var(--amber);color:#231903}
+  .cguide{position:relative;z-index:2;width:74%;max-width:340px;aspect-ratio:1;border:3px solid var(--amber);border-radius:14px;box-shadow:0 0 0 2000px rgba(0,0,0,.5)}
+  .shut{position:absolute;bottom:calc(150px + env(safe-area-inset-bottom));z-index:5;width:70px;height:70px;border-radius:50%;background:#fff;border:5px solid rgba(255,255,255,.45);cursor:pointer}
+  .shut:active{transform:scale(.93)}
+  /* --- review list --- */
+  .brow{display:flex;gap:11px;align-items:center;padding:10px;border-radius:13px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.09);margin-bottom:9px}
+  .brow.bad{border-color:rgba(199,86,64,.6);background:rgba(199,86,64,.10)}
+  .brow.wait{border-color:rgba(226,166,62,.45)}
+  .brow .bth{width:54px;height:54px;flex:0 0 auto;border-radius:9px;background:var(--ink) center/cover no-repeat;display:flex;align-items:center;justify-content:center;color:var(--faint);font-size:20px;overflow:hidden}
+  .brow .bth img{width:100%;height:100%;object-fit:cover}
+  .brow .bi{flex:1;min-width:0}
+  .brow .bi b{display:block;font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .brow .bi .sub{font-size:13px;color:var(--faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .brow .bn{font-family:var(--mono);font-size:12px;color:var(--faint);flex:0 0 auto}
+  .bacts{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
+  .bacts button{font-size:12px;padding:6px 10px;border-radius:9px;background:var(--ink-3);color:var(--paper-2);border:1px solid var(--line);cursor:pointer;font-family:var(--body)}
+  .bacts button.warn{border-color:var(--amber);color:var(--amber)}
+  /* --- candidate picker --- */
+  .cands{display:grid;grid-template-columns:repeat(3,1fr);gap:9px;margin:10px 0}
+  .cand{border-radius:11px;overflow:hidden;border:2px solid transparent;background:var(--ink);cursor:pointer;text-align:center}
+  .cand.on{border-color:var(--amber)}
+  .cand img{width:100%;aspect-ratio:1;object-fit:cover;display:block;background:var(--ink-3)}
+  .cand .cn{font-size:11px;padding:5px 4px;color:var(--paper-2);line-height:1.25;max-height:44px;overflow:hidden}
+  .cand .cm{font-size:10px;color:var(--faint);font-family:var(--mono)}
+  /* --- quadrant preview --- */
+  .quad{position:relative;border-radius:14px;overflow:hidden;border:2px solid var(--line);margin-bottom:10px}
+  .quad img{width:100%;display:block}
+  .quad .gl{position:absolute;background:var(--amber);opacity:.85}
+  .quad .qn{position:absolute;width:26px;height:26px;border-radius:50%;background:var(--amber);color:#231903;font-weight:800;font-size:14px;display:flex;align-items:center;justify-content:center}
+  .srcline{font-size:12px;color:var(--faint);text-align:center;padding:2px 0 6px;font-family:var(--mono)}
 </style>
 </head>
 <body>
@@ -274,64 +317,371 @@ function genreColor(g){
   return `hsl(${h%360} 42% 52%)`;
 }
 
-/* ===== cover lookup APIs ===== */
-function itunesLookup(artist,title){
+/* ===== identification engine =====
+   Two jobs: turn a barcode into an album, and turn a photo of a sleeve into the
+   *right* album. Every lookup produces candidates; candidates are then ranked by
+   text similarity AND by how closely their artwork matches the photographed
+   sleeve, so a different record by the same artist can no longer sneak through.
+   Nothing here blocks the UI — callers may fire these off and collect later. */
+
+/* --- text --- */
+const NOISE=/\b(remaster(ed)?|remastered version|deluxe|expanded|edition|anniversary|mono|stereo|vinyl|lp|ep|reissue|bonus tracks?|the original|original recording|explicit|single)\b/g;
+function normTxt(s){
+  return (s||'').toLowerCase()
+    .replace(/\(.*?\)|\[.*?\]/g,' ')
+    .replace(/&/g,' and ')
+    .replace(NOISE,' ')
+    .replace(/[^a-z0-9]+/g,' ').replace(/\bthe\b/g,' ').trim();
+}
+function simTxt(a,b){
+  a=normTxt(a); b=normTxt(b);
+  if(!a||!b) return 0;
+  if(a===b) return 1;
+  const A=a.split(' ').filter(Boolean),B=b.split(' ').filter(Boolean);
+  const sA=new Set(A),sB=new Set(B);
+  let inter=0; sA.forEach(t=>{ if(sB.has(t)) inter++; });
+  const dice=(2*inter)/(sA.size+sB.size);
+  const cont=(a.includes(b)||b.includes(a))?0.88:0;
+  return Math.max(dice,cont);
+}
+
+/* --- network helpers --- */
+function jsonp(url,ms){
   return new Promise(res=>{
-    const cb='itcb_'+Math.random().toString(36).slice(2);
+    const cb='wcb_'+Math.random().toString(36).slice(2);
     const s=document.createElement('script'); let done=false;
     const cleanup=()=>{ try{delete window[cb];}catch(e){} s.remove(); };
-    window[cb]=data=>{ done=true; cleanup();
-      const results=data.results||[];
-      const norm=s=>(s||'').toLowerCase().replace(/[^a-z0-9]/g,'');
-      const titleNorm=norm(title);
-      // prefer exact title match, then partial match, then any with artwork
-      const r=results.find(x=>x.artworkUrl100&&norm(x.collectionName)===titleNorm)
-        ||results.find(x=>x.artworkUrl100&&norm(x.collectionName).includes(titleNorm))
-        ||results.find(x=>x.artworkUrl100)
-        ||results[0];
-      if(!r){ res(null); return; }
-      res({
-        cover: r.artworkUrl100? r.artworkUrl100.replace('100x100bb','600x600bb') : null,
-        genre: r.primaryGenreName||'',
-        year: (r.releaseDate||'').slice(0,4)
-      });
-    };
-    s.onerror=()=>{ if(!done){cleanup();res(null);} };
-    const term=encodeURIComponent((artist+' '+title).trim());
-    s.src=`https://itunes.apple.com/search?term=${term}&entity=album&limit=5&callback=${cb}`;
+    window[cb]=d=>{ done=true; cleanup(); res(d); };
+    s.onerror=()=>{ if(!done){ cleanup(); res(null); } };
+    s.src=url+(url.includes('?')?'&':'?')+'callback='+cb;
     document.body.appendChild(s);
-    setTimeout(()=>{ if(!done){cleanup();res(null);} },6000);
+    setTimeout(()=>{ if(!done){ cleanup(); res(null); } },ms||7000);
   });
 }
-async function mbCover(artist,title){
-  try{
-    const q=encodeURIComponent(`artist:"${artist}" AND releasegroup:"${title}"`);
-    const r=await fetch(`https://musicbrainz.org/ws/2/release-group/?query=${q}&fmt=json&limit=1`);
-    const d=await r.json(); const rg=(d['release-groups']||[])[0]; if(!rg)return null;
-    const url=`https://coverartarchive.org/release-group/${rg.id}/front-500`;
-    return await new Promise(res=>{ const im=new Image(); im.onload=()=>res(url); im.onerror=()=>res(null); im.src=url; });
-  }catch(e){ return null; }
+/* MusicBrainz asks for at most one request per second, and answers 503 "server
+   busy" fairly often even when you behave. The old code read that 503 as "this
+   barcode isn't in the database", which is why scanning felt unreliable — so
+   serialise the requests and retry a busy server before believing it. */
+let mbChain=Promise.resolve(),mbLast=0;
+function mbFetch(url){
+  mbChain=mbChain.then(async()=>{
+    for(let attempt=0;attempt<3;attempt++){
+      const wait=(attempt?900*attempt:1100)-(Date.now()-mbLast);
+      if(wait>0) await new Promise(r=>setTimeout(r,wait));
+      mbLast=Date.now();
+      try{
+        const r=await fetch(url,{headers:{Accept:'application/json'}});
+        if(r.ok) return await r.json();
+        if(r.status!==503&&r.status!==429) return null;   // a real answer: no result
+      }catch(e){ /* network hiccup — worth one more go */ }
+    }
+    return null;
+  });
+  return mbChain;
 }
-async function getApiCover(artist,title){
-  if(!artist&&!title) return null;
-  const it=await itunesLookup(artist,title);
-  if(it&&it.cover) return it;
-  const mb=await mbCover(artist,title);
-  if(mb) return {cover:mb,genre:'',year:''};
+
+/* --- barcodes --- */
+/* A scanned code and the code stored in a database are often the same number
+   written differently: UPC-A is EAN-13 minus a leading zero, UPC-E is a
+   compressed UPC-A, and catalogues pad to 13 or 14 digits. Searching only the
+   literal scan is why most "not in the database" misses happen. */
+function upcEtoA(e){
+  const s=(e||'').replace(/\D/g,'');
+  if(s.length!==8) return null;
+  const ns=s[0],d=s.slice(1,7),chk=s[7],last=d[5];
+  let mid;
+  if(last==='0'||last==='1'||last==='2') mid=d.slice(0,2)+last+'0000'+d.slice(2,5);
+  else if(last==='3') mid=d.slice(0,3)+'00000'+d.slice(3,5);
+  else if(last==='4') mid=d.slice(0,4)+'00000'+d[4];
+  else mid=d.slice(0,5)+'0000'+last;
+  return ns+mid+chk;
+}
+function barcodeVariants(code){
+  const raw=(code||'').replace(/\D/g,'');
+  const out=[],seen=new Set();
+  const add=v=>{ if(v&&/^\d{8,14}$/.test(v)&&!seen.has(v)){ seen.add(v); out.push(v); } };
+  add(raw);
+  const bare=raw.replace(/^0+/,'');
+  add(bare);
+  [12,13,14].forEach(n=>{ if(bare.length<n) add(bare.padStart(n,'0')); });
+  if(raw.length===8){ const a=upcEtoA(raw); if(a){ add(a); add('0'+a); } }
+  return out;
+}
+function creditName(rel){
+  return ((rel['artist-credit']||[]).map(a=>(a.name||(a.artist&&a.artist.name)||'')+(a.joinphrase||'')).join('')).trim();
+}
+async function mbBarcode(code){
+  const vars=barcodeVariants(code); if(!vars.length) return [];
+  const q=vars.map(v=>'barcode:'+v).join(' OR ');
+  const d=await mbFetch(`https://musicbrainz.org/ws/2/release/?query=${encodeURIComponent(q)}&fmt=json&limit=25`);
+  const rels=(d&&d.releases)||[]; if(!rels.length) return [];
+  const vset=new Set(vars),literal=(code||'').replace(/\D/g,'');
+  return rels.map(rel=>{
+    const bc=(rel.barcode||'').replace(/\D/g,'');
+    // The code as scanned wins outright; otherwise the nearest zero-padding of
+    // it wins. Without this tiebreak the same sleeve resolves to a different
+    // pressing depending on whether the scanner reported 12 or 13 digits.
+    const hit=!bc?0
+      :bc===literal?140
+      :bc.replace(/^0+/,'')===literal.replace(/^0+/,'')?100-Math.abs(bc.length-literal.length)*4
+      :vset.has(bc)?90:0;
+    const fmts=(rel.media||[]).map(m=>m.format||'').filter(Boolean);
+    return { src:'mb', mbid:rel.id, rgid:(rel['release-group']||{}).id||'',
+      artist:creditName(rel), title:rel.title||'', year:(rel.date||'').slice(0,4),
+      genre:'', format:fmts.join(', '),
+      cover:'https://coverartarchive.org/release/'+rel.id+'/front-250',
+      coverBig:'https://coverartarchive.org/release/'+rel.id+'/front-500',
+      score:hit+(fmts.some(f=>/vinyl/i.test(f))?30:0)+(rel.score||0)/10 };
+  }).sort((a,b)=>b.score-a.score);
+}
+function itArt(r,n){ return r.artworkUrl100?r.artworkUrl100.replace('100x100bb',n+'x'+n+'bb'):''; }
+function itMap(r){
+  return { src:'itunes', artist:r.artistName||'', title:r.collectionName||'',
+    year:(r.releaseDate||'').slice(0,4), genre:r.primaryGenreName||'',
+    artistId:r.artistId||0, cover:itArt(r,200), coverBig:itArt(r,600), score:0 };
+}
+async function itunesUpc(code){
+  const vars=barcodeVariants(code).slice(0,4);
+  const all=await Promise.all(vars.map(v=>jsonp('https://itunes.apple.com/lookup?upc='+v)));
+  for(const d of all){                       // first variant that hits, in priority order
+    const r=((d&&d.results)||[]).find(x=>x.collectionName);
+    if(r) return itMap(r);
+  }
   return null;
 }
-/* Level 1 — barcode via MusicBrainz */
-async function barcodeLookup(code){
+/* Optional third source. Discogs is by far the best vinyl barcode database, but
+   its API needs a token, which must not sit in the browser — so we ask the
+   Worker for /api/discogs and quietly give up if that route isn't deployed. */
+let discogsOk=null;
+async function discogsBarcode(code){
+  if(!CONFIG.WORKER_URL||discogsOk===false) return null;
   try{
-    const r=await fetch(`https://musicbrainz.org/ws/2/release/?query=barcode:${encodeURIComponent(code)}&fmt=json&limit=1`);
-    const d=await r.json(); const rel=(d.releases||[])[0]; if(!rel) return null;
-    const artist=(rel['artist-credit']||[]).map(a=>a.name||(a.artist&&a.artist.name)||'').join('').trim();
-    const title=rel.title||'';
-    const year=(rel.date||'').slice(0,4);
-    const cover=`https://coverartarchive.org/release/${rel.id}/front-500`;
-    const ok=await new Promise(res=>{const im=new Image();im.onload=()=>res(true);im.onerror=()=>res(false);im.src=cover;});
-    return {artist,title,year,genre:'',cover:ok?cover:null};
+    const r=await fetch(CONFIG.WORKER_URL+'/api/discogs?barcode='+encodeURIComponent(code));
+    if(!r.ok){ if(r.status===404||r.status===501) discogsOk=false; return null; }
+    discogsOk=true;
+    const d=await r.json();
+    const hit=(d.results||[])[0]; if(!hit) return null;
+    const t=(hit.title||''); const dash=t.indexOf(' - ');
+    return { src:'discogs',
+      artist:hit.artist||(dash>0?t.slice(0,dash):''),
+      title:hit.album||(dash>0?t.slice(dash+3):t),
+      year:String(hit.year||''), genre:(hit.genre||[])[0]||'',
+      cover:hit.thumb||'', coverBig:hit.cover_image||hit.thumb||'', score:0 };
+  }catch(e){ discogsOk=false; return null; }
+}
+async function barcodeLookup(code){
+  const [mb,it,dc]=await Promise.all([
+    mbBarcode(code).catch(()=>[]),
+    itunesUpc(code).catch(()=>null),
+    discogsBarcode(code).catch(()=>null)
+  ]);
+  const pool=[...mb.slice(0,4)]; if(it)pool.push(it); if(dc)pool.push(dc);
+  if(!pool.length) return null;
+  // agreement between two independent databases is the strongest signal there is
+  for(const c of pool){
+    c.agree=pool.filter(o=>o!==c&&simTxt(o.title,c.title)>0.6&&simTxt(o.artist,c.artist)>0.5).length;
+    c.rank=c.agree*100+(c.score||0)+(c.src==='mb'?5:0);
+  }
+  pool.sort((a,b)=>b.rank-a.rank);
+  const best=pool[0];
+  const merged={ artist:best.artist,title:best.title,year:best.year,genre:best.genre||'',
+    cover:'',coverBig:'',srcs:[...new Set(pool.filter(c=>c.rank>=best.rank-5).map(c=>c.src))] };
+  for(const c of pool){
+    if(!merged.year&&c.year&&simTxt(c.title,best.title)>0.6) merged.year=c.year;
+    if(!merged.genre&&c.genre&&simTxt(c.title,best.title)>0.6) merged.genre=c.genre;
+  }
+  // probe the plausible covers at once and keep the best one that loads —
+  // Cover Art Archive redirects through archive.org and can be slow, so doing
+  // this one at a time is what used to make a lookup take half a minute
+  const urls=pool.filter(c=>c.coverBig).slice(0,4).map(c=>c.coverBig);
+  const oks=await Promise.all(urls.map(imgExists));
+  const first=oks.indexOf(true);
+  if(first>=0) merged.cover=urls[first];
+  if(!merged.cover){
+    // capped: a missing sleeve is a small annoyance you can fix later, a lookup
+    // that hangs for half a minute stops you dead
+    const api=await Promise.race([
+      getApiCover(merged.artist,merged.title),
+      new Promise(r=>setTimeout(()=>r(null),6000))
+    ]);
+    if(api&&api.cover) merged.cover=api.cover;
+    if(api&&api.genre&&!merged.genre) merged.genre=api.genre;
+  }
+  return merged;
+}
+function imgExists(url){
+  // Cover Art Archive redirects through archive.org and sometimes answers a
+  // slow 500. Waiting it out is not worth it — the sleeve can be added later.
+  return new Promise(res=>{ const im=new Image(); im.onload=()=>res(true); im.onerror=()=>res(false); im.src=url; setTimeout(()=>res(false),4000); });
+}
+
+/* --- cover fingerprints ---
+   A 16x16 gradient hash (which way brightness steps, pixel to pixel) plus a 4x4
+   colour layout. The gradient part survives different lighting; the colour part
+   stops two dark jazz sleeves from looking identical. Distance is 0 (same
+   artwork) to ~1 (unrelated). Both cover-art hosts send CORS headers, so the
+   comparison happens entirely on the phone. */
+function loadImg(src){
+  return new Promise(res=>{
+    if(!src){ res(null); return; }
+    const im=new Image();
+    if(!/^data:/.test(src)) im.crossOrigin='anonymous';
+    im.onload=()=>res(im); im.onerror=()=>res(null);
+    im.src=src;
+    setTimeout(()=>res(null),9000);
+  });
+}
+function sigFrom(drawable){
+  try{
+    const N=16,cv=document.createElement('canvas');
+    cv.width=N;cv.height=N;
+    const cx=cv.getContext('2d',{willReadFrequently:true});
+    cx.drawImage(drawable,0,0,N,N);
+    const d=cx.getImageData(0,0,N,N).data;
+    const g=new Float32Array(N*N),col=new Float32Array(48);
+    for(let i=0;i<N*N;i++){
+      const r=d[i*4],gr=d[i*4+1],b=d[i*4+2];
+      g[i]=r*0.299+gr*0.587+b*0.114;
+      const q=(Math.floor(Math.floor(i/N)/4)*4+Math.floor((i%N)/4))*3;
+      col[q]+=r/16; col[q+1]+=gr/16; col[q+2]+=b/16;
+    }
+    const bits=[];
+    for(let y=0;y<N;y++) for(let x=0;x<N-1;x++) bits.push(g[y*N+x]>g[y*N+x+1]?1:0);
+    for(let x=0;x<N;x++) for(let y=0;y<N-1;y++) bits.push(g[y*N+x]>g[(y+1)*N+x]?1:0);
+    let mean=0; for(let i=0;i<48;i++) mean+=col[i]; mean/=48;
+    return {bits,col,mean:mean||1};
   }catch(e){ return null; }
+}
+async function sigOf(src){ const im=await loadImg(src); return im?sigFrom(im):null; }
+function coverDist(a,b){
+  if(!a||!b) return 1;
+  let diff=0; for(let i=0;i<a.bits.length;i++) if(a.bits[i]!==b.bits[i]) diff++;
+  const bitD=Math.min(1,(diff/a.bits.length)/0.5);     // 0.5 of the bits differ = unrelated
+  // scale both colour signatures to a common brightness first, so a photo taken
+  // in a dim room still matches the same artwork scanned under studio light
+  const ka=1/a.mean,kb=1/b.mean;
+  let cd=0; for(let i=0;i<48;i++) cd+=Math.abs(a.col[i]*ka-b.col[i]*kb);
+  const colD=Math.min(1,cd/48/0.9);
+  return 0.62*bitD+0.38*colD;
+}
+/* Calibrated against real artwork: a phone snap of the right sleeve lands
+   around 0.42-0.60 from its own cover, a different sleeve sits at 0.65-0.86.
+   The gap to the runner-up turns out to separate right from wrong far better
+   than the absolute distance, so a confident match needs both. */
+const COVER_ACCEPT=0.62,COVER_MAYBE=0.78,COVER_MARGIN=0.06;
+
+/* --- candidate search --- */
+async function itunesSearch(artist,title,limit){
+  const term=(artist+' '+title).trim(); if(!term) return [];
+  const d=await jsonp('https://itunes.apple.com/search?term='+encodeURIComponent(term)+'&entity=album&limit='+(limit||12));
+  return ((d&&d.results)||[]).filter(r=>r.collectionName).map(itMap);
+}
+async function itunesDiscography(artistId,limit){
+  if(!artistId) return [];
+  const d=await jsonp('https://itunes.apple.com/lookup?id='+artistId+'&entity=album&limit='+(limit||40));
+  return ((d&&d.results)||[]).filter(r=>r.wrapperType==='collection'&&r.collectionName).map(itMap);
+}
+async function mbGroups(artist,title,limit){
+  const parts=[];
+  if(artist) parts.push('artist:"'+artist.replace(/"/g,'')+'"');
+  if(title) parts.push('releasegroup:"'+title.replace(/"/g,'')+'"');
+  if(!parts.length) return [];
+  const d=await mbFetch('https://musicbrainz.org/ws/2/release-group/?query='+encodeURIComponent(parts.join(' AND '))+'&fmt=json&limit='+(limit||8));
+  return ((d&&d['release-groups'])||[]).map(rg=>({
+    src:'mb', rgid:rg.id, artist:creditName(rg), title:rg.title||'',
+    year:(rg['first-release-date']||'').slice(0,4), genre:'',
+    cover:'https://coverartarchive.org/release-group/'+rg.id+'/front-250',
+    coverBig:'https://coverartarchive.org/release-group/'+rg.id+'/front-500', score:rg.score||0
+  }));
+}
+function dedupeCands(list){
+  const out=[],seen=new Set();
+  for(const c of list){
+    if(!c||!c.title) continue;
+    const k=normTxt(c.artist)+'|'+normTxt(c.title);
+    if(seen.has(k)) continue;
+    seen.add(k); out.push(c);
+  }
+  return out;
+}
+/* Strict cover-by-name lookup: a title that doesn't actually match is worse than
+   no cover at all, because it silently files the record under the wrong sleeve. */
+async function getApiCover(artist,title){
+  if(!artist&&!title) return null;
+  const it=await itunesSearch(artist,title,8);
+  const scored=it.map(c=>({c,s:0.45*simTxt(artist,c.artist)+0.55*simTxt(title,c.title)}))
+                 .sort((a,b)=>b.s-a.s);
+  const top=scored[0];
+  if(top&&top.s>=(title?0.62:0.5)&&top.c.coverBig) return {cover:top.c.coverBig,genre:top.c.genre,year:top.c.year};
+  const mb=(await mbGroups(artist,title,3))
+    .filter(c=>0.45*simTxt(artist,c.artist)+0.55*simTxt(title,c.title)>=0.6);
+  if(mb.length){
+    const oks=await Promise.all(mb.map(c=>imgExists(c.coverBig)));
+    const i=oks.indexOf(true);
+    if(i>=0) return {cover:mb[i].coverBig,genre:'',year:mb[i].year};
+  }
+  return null;
+}
+
+/* --- photo -> album --- */
+async function claudeVision(dataUrl){
+  if(!CONFIG.CLAUDE_PROXY) return null;
+  const r=await fetch(CONFIG.CLAUDE_PROXY,{
+    method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({image:dataUrl,
+      query:'Identify this vinyl LP from the photo of its sleeve. Reply with JSON only: {"artist","title","year","genre","alternatives":[{"artist","title"}]}. Put up to 3 other plausible albums in alternatives. If you are sure of the artist but not the exact album, still give the artist and leave title empty rather than guessing a different album by that artist.'})
+  });
+  const d=await r.json();
+  if(d&&(d.title!==undefined||d.artist!==undefined)) return d;
+  const text=((d.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('')||'').trim();
+  const m=text.replace(/```json|```/g,'').match(/\{[\s\S]*\}/);
+  return m?JSON.parse(m[0]):null;
+}
+/* Score every candidate against the photographed sleeve. Text gets a say, but
+   the picture decides — that is the whole point of this function. */
+async function rankByCover(photoSig,cands,guess){
+  const list=cands.slice(0,14);
+  const sigs=await Promise.all(list.map(c=>sigOf(c.cover||c.coverBig)));
+  const scored=[];
+  for(let i=0;i<list.length;i++){
+    const c=list[i];
+    if(!sigs[i]) continue;                       // no artwork we could read
+    c.dist=coverDist(photoSig,sigs[i]);
+    c.txt=guess?(0.45*simTxt(guess.artist||'',c.artist)+0.55*simTxt(guess.title||'',c.title)):0;
+    c.total=c.dist-0.10*c.txt;                   // text nudges, never overrules
+    scored.push(c);
+  }
+  scored.sort((a,b)=>a.total-b.total);
+  return scored;
+}
+async function identifyPhoto(dataUrl){
+  const photoSig=await sigOf(dataUrl);
+  let guess=null;
+  try{ guess=await claudeVision(dataUrl); }catch(e){}
+  if(!guess||(!guess.artist&&!guess.title)) return {status:'none',photo:dataUrl,candidates:[],reason:'unread'};
+  let cands=[];
+  cands.push(...await itunesSearch(guess.artist||'',guess.title||'',12));
+  for(const alt of (Array.isArray(guess.alternatives)?guess.alternatives:[]).slice(0,3)){
+    cands.push(...await itunesSearch(alt.artist||guess.artist||'',alt.title||'',5));
+  }
+  // the reported failure mode: right artist, wrong record. So pull the artist's
+  // whole discography in and let the artwork pick the one on the table.
+  const withId=cands.find(c=>c.artistId&&simTxt(c.artist,guess.artist||'')>0.6);
+  if(withId) cands.push(...await itunesDiscography(withId.artistId,40));
+  if(cands.length<6) cands.push(...await mbGroups(guess.artist||'',guess.title||'',8));
+  cands=dedupeCands(cands);
+  if(!cands.length) return {status:'none',photo:dataUrl,candidates:[],guess,reason:'nocands'};
+  if(!photoSig){                                   // couldn't fingerprint the photo
+    const t=cands.map(c=>({c,s:0.45*simTxt(guess.artist||'',c.artist)+0.55*simTxt(guess.title||'',c.title)})).sort((a,b)=>b.s-a.s);
+    return {status:'ambiguous',photo:dataUrl,candidates:t.slice(0,6).map(x=>x.c),guess};
+  }
+  const scored=await rankByCover(photoSig,cands,guess);
+  if(!scored.length) return {status:'ambiguous',photo:dataUrl,candidates:cands.slice(0,6),guess};
+  const best=scored[0],second=scored[1];
+  const clear=!second||(second.dist-best.dist)>=COVER_MARGIN;
+  if(best.dist<=COVER_ACCEPT&&clear) return {status:'ok',photo:dataUrl,best,candidates:scored.slice(0,6),guess};
+  if(best.dist<=COVER_MAYBE) return {status:'ambiguous',photo:dataUrl,best,candidates:scored.slice(0,6),guess};
+  return {status:'ambiguous',photo:dataUrl,candidates:scored.slice(0,6),guess,weak:true};
 }
 /* Level 2 — Claude figures out the album */
 async function claudeFind(query){
@@ -350,28 +700,119 @@ async function claudeFind(query){
   const m=clean.match(/\{[\s\S]*\}/);
   return JSON.parse(m?m[0]:clean);
 }
-/* camera barcode scanner with manual fallback */
-function openBarcodeScanner(cb,onCancel){
+/* ===== capture feedback + concurrency ===== */
+let actx=null;
+function blip(ok){
+  try{
+    actx=actx||new (window.AudioContext||window.webkitAudioContext)();
+    if(actx.state==='suspended') actx.resume();
+    const o=actx.createOscillator(),g=actx.createGain();
+    o.connect(g); g.connect(actx.destination);
+    o.type='sine'; o.frequency.value=ok?920:280;
+    g.gain.setValueAtTime(0.001,actx.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.08,actx.currentTime+0.01);
+    g.gain.exponentialRampToValueAtTime(0.001,actx.currentTime+0.11);
+    o.start(); o.stop(actx.currentTime+0.12);
+  }catch(e){}
+  try{ if(navigator.vibrate) navigator.vibrate(ok?45:[35,55,35]); }catch(e){}
+}
+/* keeps background lookups from stampeding the APIs while you keep scanning */
+function makePool(n){
+  let active=0; const q=[];
+  const next=()=>{
+    if(active>=n||!q.length) return;
+    active++; const job=q.shift();
+    Promise.resolve().then(job.fn).then(job.res,job.rej).then(()=>{ active--; next(); });
+  };
+  return { run(fn){ return new Promise((res,rej)=>{ q.push({fn,res,rej}); next(); }); } };
+}
+
+/* ===== camera =====
+   One overlay, two jobs. In single mode it behaves exactly as before: find a
+   barcode, close, hand it back. In batch mode the camera stays live — every
+   code it reads and every sleeve you shoot is passed straight out and you carry
+   straight on to the next record. Nothing is ever looked up while you wait. */
+function openScanner(opt){
+  opt=opt||{};
+  const batch=!!opt.batch;
   const hasDet=('BarcodeDetector' in window);
-  let stream=null,raf=null,running=true;
+  let stream=null,raf=null,running=true,mode='code',lastCode='',lastAt=0,busy=false;
   const ov=el(`<div class="scanov">
     <video id="scanvid" autoplay muted playsinline></video>
-    <div class="scanframe"></div>
-    <div class="scanmsg" id="scanmsg">Nakieruj aparat na kod kreskowy</div>
+    ${batch?`<div class="bcount" id="bcount">0</div>
+    <div class="scanseg" id="scanseg"><button class="on" data-m="code">Kod kreskowy</button><button data-m="cover">Okładka</button></div>`:''}
+    <div class="scanframe" id="reticle"></div>
+    ${batch?'<div class="cguide" id="cguide" style="display:none"></div>':''}
+    <div class="scanmsg" id="scanmsg">${batch?'Skanuj kod po kodzie — nie musisz czekać':'Nakieruj aparat na kod kreskowy'}</div>
+    ${batch?'<div class="bstrip" id="bstrip"></div>':''}
     <div class="scanbtns">
-      <button class="btn ghost" id="scanManual">Wpisz kod ręcznie</button>
-      <button class="btn ghost" id="scanClose">Anuluj</button>
-    </div></div>`);
+      ${batch?'<button class="btn ghost" id="scanManual">⌨</button><button class="btn" id="scanDone">Gotowe</button>'
+             :'<button class="btn ghost" id="scanManual">Wpisz kod ręcznie</button><button class="btn ghost" id="scanClose">Anuluj</button>'}
+    </div>
+    ${batch?'<button class="shut" id="shutter" style="display:none"></button>':''}
+    </div>`);
   document.body.appendChild(ov);
-  const cleanup=()=>{running=false;if(raf)cancelAnimationFrame(raf);if(stream)stream.getTracks().forEach(t=>t.stop());ov.remove();};
-  ov.querySelector('#scanClose').onclick=()=>{cleanup();if(onCancel)onCancel();};
-  ov.querySelector('#scanManual').onclick=()=>{
-    ov.querySelector('.scanbtns').style.display='none';
-    const box=el(`<div class="scanin"><input id="bcin" inputmode="numeric" placeholder="Numer kodu (EAN/UPC)"><button class="btn" id="bcok" style="width:auto;padding:14px 18px">OK</button></div>`);
-    ov.appendChild(box); const inp=box.querySelector('#bcin'); setTimeout(()=>inp.focus(),60);
-    box.querySelector('#bcok').onclick=()=>{ const v=inp.value.trim(); if(v){cleanup();cb(v);} };
+  const msg=t=>{ const m=ov.querySelector('#scanmsg'); if(m) m.textContent=t; };
+  const cleanup=()=>{ running=false; if(raf)cancelAnimationFrame(raf); if(stream)stream.getTracks().forEach(t=>t.stop()); ov.remove(); };
+  const flash=()=>{ const f=el('<div class="bflash"></div>'); ov.appendChild(f); setTimeout(()=>f.remove(),460); };
+
+  const refresh=()=>{
+    if(!batch||!opt.items) return;
+    const items=opt.items()||[];
+    const c=ov.querySelector('#bcount'); if(c) c.textContent=items.length;
+    const strip=ov.querySelector('#bstrip'); if(!strip) return;
+    strip.innerHTML=items.slice(-14).map((it,i)=>{
+      const n=items.length-Math.min(14,items.length)+i+1;
+      const thumb=it.data&&it.data.cover?it.data.cover:(it.photo||'');
+      const mark=it.status==='ok'?'✓':(it.status==='pending'?'…':(it.status==='ambiguous'?'?':'✗'));
+      return `<div class="bchip ${it.status}" ${thumb?'style="background-image:url(\''+thumb+'\')"':''}>${thumb?'':n}<span class="st">${mark}</span></div>`;
+    }).join('');
+    strip.scrollLeft=strip.scrollWidth;
   };
-  if(!hasDet){ ov.querySelector('#scanmsg').textContent='Skaner kamery niedostępny tutaj — wpisz kod ręcznie'; return; }
+
+  const manual=()=>{
+    const bar=ov.querySelector('.scanbtns'); bar.style.display='none';
+    const box=el(`<div class="scanin"><input id="bcin" inputmode="numeric" placeholder="Numer kodu (EAN/UPC)"><button class="btn" id="bcok" style="width:auto;padding:14px 18px">OK</button>${batch?'<button class="btn ghost" id="bccancel" style="width:auto;padding:14px 16px">✕</button>':''}</div>`);
+    ov.appendChild(box);
+    const inp=box.querySelector('#bcin'); setTimeout(()=>inp.focus(),60);
+    const close=()=>{ box.remove(); bar.style.display='flex'; };
+    const submit=()=>{
+      const v=inp.value.trim(); if(!v) return;
+      if(batch){ close(); blip(true); opt.onCode&&opt.onCode(v); refresh(); }
+      else { cleanup(); opt.onCode&&opt.onCode(v); }
+    };
+    box.querySelector('#bcok').onclick=submit;
+    const cancel=box.querySelector('#bccancel');
+    if(cancel) cancel.onclick=close;      // otherwise "Gotowe" is unreachable
+    inp.addEventListener('keydown',e=>{ if(e.key==='Enter') submit(); });
+  };
+  ov.querySelector('#scanManual').onclick=manual;
+  const closeBtn=ov.querySelector('#scanClose');
+  if(closeBtn) closeBtn.onclick=()=>{ cleanup(); opt.onCancel&&opt.onCancel(); };
+  const doneBtn=ov.querySelector('#scanDone');
+  if(doneBtn) doneBtn.onclick=()=>{ cleanup(); opt.onDone&&opt.onDone(); };
+
+  if(batch){
+    ov.querySelectorAll('#scanseg button').forEach(b=>b.onclick=()=>{
+      mode=b.dataset.m;
+      ov.querySelectorAll('#scanseg button').forEach(x=>x.classList.toggle('on',x===b));
+      ov.querySelector('#reticle').style.display=mode==='code'?'block':'none';
+      ov.querySelector('#cguide').style.display=mode==='cover'?'block':'none';
+      ov.querySelector('#shutter').style.display=mode==='cover'?'block':'none';
+      msg(mode==='code'?'Skanuj kod po kodzie — nie musisz czekać':'Ustaw okładkę w ramce i naciśnij spust');
+    });
+    ov.querySelector('#shutter').onclick=async()=>{
+      const v=ov.querySelector('#scanvid');
+      if(!v.videoWidth||busy) return;
+      busy=true; flash(); blip(true);
+      const g=ov.querySelector('#cguide').getBoundingClientRect();
+      const url=cropFromVideo(v,g);
+      busy=false;
+      if(url){ opt.onPhoto&&opt.onPhoto(url); refresh(); }
+    };
+  }
+
+  if(!hasDet){ msg('Skaner kamery niedostępny tutaj — wpisz kod ręcznie'); return {close:cleanup,refresh}; }
   (async()=>{
     try{
       stream=await navigator.mediaDevices.getUserMedia({video:{
@@ -386,34 +827,48 @@ function openBarcodeScanner(cb,onCancel){
       const track=stream.getVideoTracks()[0];
       if(track){
         try{await track.applyConstraints({advanced:[{focusMode:'continuous'}]});}catch(e){}
-        // add torch toggle button
         try{
           const caps=track.getCapabilities&&track.getCapabilities();
           if(caps&&caps.torch){
-            const torchBtn=el('<button class="btn ghost" id="scanTorch" style="position:absolute;top:16px;right:16px;padding:8px 14px;font-size:20px;z-index:5">🔦</button>');
-            ov.querySelector('.scanov').appendChild(torchBtn);
+            const torchBtn=el('<button class="btn ghost" id="scanTorch" style="position:absolute;top:calc(14px + env(safe-area-inset-top));right:16px;padding:8px 14px;font-size:20px;z-index:5">🔦</button>');
+            ov.appendChild(torchBtn);
             let torchOn=false;
             torchBtn.onclick=async()=>{torchOn=!torchOn;try{await track.applyConstraints({advanced:[{torch:torchOn}]});}catch(e){}torchBtn.style.opacity=torchOn?'1':'0.5';};
           }
         }catch(e){}
       }
       const det=new BarcodeDetector({formats:['ean_13','ean_8','upc_a','upc_e']});
-      const scanCv=document.createElement('canvas');const scanCtx=scanCv.getContext('2d');
+      const scanCv=document.createElement('canvas');const scanCtx=scanCv.getContext('2d',{willReadFrequently:true});
       const tick=async()=>{ if(!running)return;
         try{
-          if(v.videoWidth){
+          if(v.videoWidth&&mode==='code'){
             scanCv.width=v.videoWidth;scanCv.height=v.videoHeight;
             scanCtx.filter='contrast(1.8) saturate(0)';
             scanCtx.drawImage(v,0,0);scanCtx.filter='none';
             const codes=await det.detect(scanCv);
-            if(codes&&codes.length){ const code=codes[0].rawValue; cleanup(); cb(code); return; }
+            if(codes&&codes.length){
+              const code=codes[0].rawValue;
+              if(!batch){ cleanup(); opt.onCode&&opt.onCode(code); return; }
+              const now=Date.now();
+              // the same sleeve stays in frame for a second or two after a hit
+              if(code!==lastCode||now-lastAt>3500){
+                lastCode=code; lastAt=now;
+                flash(); blip(true);
+                msg('✓ '+code);
+                opt.onCode&&opt.onCode(code);
+                refresh();
+                setTimeout(()=>{ if(running&&mode==='code') msg('Skanuj kod po kodzie — nie musisz czekać'); },1200);
+              }
+            }
           }
         }catch(e){}
         raf=requestAnimationFrame(tick); };
       tick();
-    }catch(e){ ov.querySelector('#scanmsg').textContent='Brak dostępu do kamery — wpisz kod ręcznie'; }
+    }catch(e){ msg('Brak dostępu do kamery — wpisz kod ręcznie'); }
   })();
+  return {close:cleanup,refresh};
 }
+function openBarcodeScanner(cb,onCancel){ return openScanner({onCode:cb,onCancel}); }
 
 /* ===== helpers ===== */
 function crateAlbums(id){ return state.albums.filter(a=>a.crateId===id).sort((x,y)=>x.position-y.position); }
@@ -547,12 +1002,24 @@ function renderCrateDetail(){
     r.onclick=e=>{
       if(e.target.closest('[data-handle]'))return;
       const a=state.albums.find(x=>x.id===r.dataset.row);
-      if(a) openAlbumDetail(a);
+      if(a) a.pending?openEditAlbum(a):openAlbumDetail(a);
     };
   });
   enableDrag(c.id);
 }
+/* A slot held by bulk adding that hasn't been identified yet. It keeps the
+   physical position honest until you finish it off. */
+function pendingRowHTML(a){
+  return `<div class="row" data-row="${a.id}" style="border-left:3px solid var(--amber)">
+    <span class="handle" data-handle>⋮⋮</span>
+    ${a.cover?`<img class="cover" data-cover="${a.id}" alt="">`:`<div class="cover">bez okładki</div>`}
+    <div class="info"><b>${esc(a.title)||'Miejsce zajęte'}</b>
+      <div class="sub" style="color:var(--amber)">⚠ do uzupełnienia${a.code?' · kod '+esc(a.code):''}</div></div>
+    <span class="pos">#${a.position}</span>
+  </div>`;
+}
 function rowHTML(a){
+  if(a.pending) return pendingRowHTML(a);
   return `<div class="row" data-row="${a.id}">
     <span class="handle" data-handle>⋮⋮</span>
     ${a.cover?`<img class="cover" data-cover="${a.id}" alt="">`:`<div class="cover">brak okładki</div>`}
@@ -560,6 +1027,84 @@ function rowHTML(a){
       <div class="sub">${esc(a.artist)||'Nieznany'} ${a.year?'· '+a.year:''} ${a.genre?'· '+a.genre:''} ${a.rating?'<span class="stars">'+('\u2605'.repeat(a.rating)+'\u2606'.repeat(5-a.rating))+'</span>':''}</div></div>
     <span class="pos">#${a.position}</span>
   </div>`;
+}
+/* Editing an existing record — also how a placeholder left by bulk adding gets
+   finished off, without disturbing the slot it is holding. */
+function openEditAlbum(a){
+  let coverVal=a.cover==='local'?null:(a.cover||null),coverIsLocal=false;
+  let mood=a.mood||'',rating=a.rating||0;
+  const sheet=modal(`<h2>${a.pending?'Uzupełnij płytę':'Edytuj płytę'}</h2>
+    <div id="eprev" class="cover-prev">${a.cover?'<img data-cover="'+a.id+'" alt="">':'<div class="ph">Brak okładki</div>'}</div>
+    <div id="estatus" class="status-line"></div>
+    <label class="fld"><span>Wykonawca</span><input id="eartist" value="${esc(a.artist||'')}" autocomplete="off"></label>
+    <label class="fld"><span>Album</span><input id="etitle" value="${esc(a.title||'')}" autocomplete="off"></label>
+    <label class="fld"><span>Rok</span><input id="eyear" type="number" inputmode="numeric" min="1900" max="2099" value="${esc(a.year||'')}"></label>
+    <label class="fld"><span>Gatunek</span><input id="egenre" value="${esc(a.genre||'')}" autocomplete="off"></label>
+    <div class="fld"><label>Nastrój</label><div id="emPick" class="chiprow">${MOODS.map(m=>'<span class="chip'+(m===mood?' on':'')+'" data-m="'+m+'">'+m+'</span>').join('')}</div></div>
+    <div class="fld"><label>Ocena</label><div id="erPick" class="starrow">${[1,2,3,4,5].map(n=>'<span class="star'+(n<=rating?' on':'')+'" data-r="'+n+'">★</span>').join('')}</div></div>
+    <div style="display:flex;gap:10px;margin-top:8px">
+      <button class="btn ghost" id="efind" style="flex:1">🔍 Znajdź album</button>
+      <button class="btn ghost" id="ephoto" style="flex:1">📸 Zdjęcie okładki</button>
+    </div>
+    <input type="file" id="efile" accept="image/*" capture="environment" hidden>
+    <button class="btn" id="esave" style="margin-top:14px;width:100%">Zapisz</button>
+    <button class="btn ghost" id="edel" style="margin-top:8px;width:100%;color:var(--oxblood);border-color:var(--oxblood)">Usuń płytę</button>`);
+  hydrateCovers(sheet);
+  const q=id=>sheet.querySelector(id);
+  const setStatus=(m,c)=>{ const s=q('#estatus'); s.textContent=m; s.className='status-line '+(c||''); };
+  const showImg=src=>{ q('#eprev').innerHTML='<img src="'+src+'" alt="">'; };
+  sheet.querySelectorAll('#emPick .chip').forEach(c=>c.onclick=()=>{
+    mood=mood===c.dataset.m?'':c.dataset.m;
+    sheet.querySelectorAll('#emPick .chip').forEach(x=>x.classList.toggle('on',x.dataset.m===mood));
+  });
+  sheet.querySelectorAll('#erPick .star').forEach(s=>s.onclick=()=>{
+    rating=+s.dataset.r;
+    sheet.querySelectorAll('#erPick .star').forEach((x,i)=>x.classList.toggle('on',i<rating));
+  });
+  q('#ephoto').onclick=()=>q('#efile').click();
+  q('#efile').onchange=e=>{
+    const f=e.target.files[0]; if(!f) return;
+    downscale(f).then(d=>{ if(d){ coverVal=d; coverIsLocal=true; showImg(d); } });
+  };
+  q('#efind').onclick=async()=>{
+    const artist=q('#eartist').value.trim(),title=q('#etitle').value.trim();
+    if(!artist&&!title){ toast('Wpisz wykonawcę lub tytuł'); return; }
+    setStatus('Szukam albumu…','busy');
+    try{
+      if(CONFIG.CLAUDE_PROXY){
+        const d=await claudeFind([artist,title].filter(Boolean).join(' — '));
+        if(d&&(d.title||d.artist)){
+          if(d.artist&&!artist)q('#eartist').value=d.artist;
+          if(d.title&&!title)q('#etitle').value=d.title;
+          if(d.year&&!q('#eyear').value)q('#eyear').value=d.year;
+          if(d.genre&&!q('#egenre').value)q('#egenre').value=d.genre;
+        }
+      }
+      const c=await getApiCover(q('#eartist').value.trim(),q('#etitle').value.trim());
+      if(c&&c.cover){ coverVal=c.cover; coverIsLocal=false; showImg(c.cover);
+        if(c.year&&!q('#eyear').value)q('#eyear').value=c.year;
+        if(c.genre&&!q('#egenre').value)q('#egenre').value=c.genre;
+        setStatus('✓ Znaleziono','ok');
+      } else setStatus('✗ Nie znaleziono okładki — uzupełnij ręcznie','bad');
+    }catch(e){ setStatus('✗ Błąd połączenia','bad'); }
+  };
+  q('#esave').onclick=async()=>{
+    a.artist=q('#eartist').value.trim();
+    a.title=q('#etitle').value.trim();
+    a.year=q('#eyear').value.trim();
+    a.genre=q('#egenre').value.trim();
+    a.mood=mood; a.rating=rating;
+    if(coverVal&&coverIsLocal){ await saveCover(a.id,coverVal); a.cover='local'; }
+    else if(coverVal&&coverVal!==a.cover){ a.cover=coverVal; }
+    if(a.artist||a.title){ delete a.pending; delete a.code; }
+    await persist(); closeModal(); render(); toast('Zapisano');
+  };
+  q('#edel').onclick=async()=>{
+    const crateId=a.crateId;
+    state.albums=state.albums.filter(x=>x.id!==a.id);
+    crateAlbums(crateId).forEach((x,i)=>x.position=i+1);
+    await persist(); closeModal(); render(); toast('Usunięto płytę');
+  };
 }
 function enableDrag(crateId){
   const list=document.getElementById('rowList'); if(!list)return;
@@ -622,14 +1167,254 @@ function openCapture(crate){
   function showMethods(){
     content().innerHTML=`
       <div style="display:flex;flex-direction:column;gap:12px;padding:10px 0">
-        <button class="btn" id="goScan" style="font-size:16px;padding:16px">📷  Zeskanuj kod kreskowy</button>
+        <button class="btn" id="goBatch" style="font-size:16px;padding:16px">⚡  Pakowanie seryjne</button>
+        <div class="srcline" style="margin-top:-6px">skanuj jedną po drugiej — rozpoznawanie leci w tle</div>
+        <button class="btn ghost" id="goQuad" style="font-size:16px;padding:16px">▦  Cztery na raz (kwadrat)</button>
+        <button class="btn ghost" id="goScan" style="font-size:16px;padding:16px">📷  Pojedynczy kod kreskowy</button>
         <button class="btn ghost" id="goPhoto" style="font-size:16px;padding:16px">📸  Zrób zdjęcie okładki</button>
         <button class="btn ghost" id="goManual" style="font-size:16px;padding:16px">✏️  Wpisz ręcznie</button>
       </div>
+      ${queue.length?`<button class="btn ghost" id="goQueue" style="width:100%;margin-top:4px;border-color:var(--amber);color:var(--amber)">↩ Wróć do listy (${queue.length})</button>`:''}
       <select class="sel" id="crateSel" style="margin-top:10px">${state.crates.map(c=>'<option value="'+c.id+'"'+(c.id===crate.id?' selected':'')+'>'+esc(c.name)+'</option>').join('')}</select>`;
+    content().querySelector('#goBatch').onclick=()=>startBatch();
+    content().querySelector('#goQuad').onclick=()=>doQuad();
     content().querySelector('#goScan').onclick=()=>doBarcode();
     content().querySelector('#goPhoto').onclick=()=>doPhoto();
     content().querySelector('#goManual').onclick=()=>showManual();
+    const gq=content().querySelector('#goQueue'); if(gq) gq.onclick=()=>showReview();
+  }
+
+  /* ================= bulk adding =================
+     One queue, filled by whichever bulk method you used, drained by a small
+     pool of background lookups. Capturing never waits for identification:
+     items land as 'pending' and quietly become 'ok', 'ambiguous' or 'none'
+     while you carry on. Nothing is written to the collection until you say so,
+     and an item that couldn't be identified keeps its place in the queue as a
+     placeholder you can re-scan or fill in by hand. */
+  const queue=[];
+  const pool=makePool(3);
+  let scanner=null;
+
+  function enqueue(item){
+    const it=Object.assign({id:uid(),status:'pending',data:null,candidates:[],rating:0,mood:''},item);
+    queue.push(it);
+    pool.run(()=>resolveItem(it)).then(()=>{
+      if(scanner) scanner.refresh();
+      touchRow(it);
+    });
+    return it;
+  }
+  async function resolveItem(it){
+    try{
+      if(it.kind==='barcode'){
+        const d=await barcodeLookup(it.code);
+        if(d&&(d.title||d.artist)){ it.data=d; it.status='ok'; }
+        else it.status='none';
+      } else {
+        const r=await identifyPhoto(it.photo);
+        it.candidates=r.candidates||[];
+        if(r.status==='ok'){ it.data=candToData(r.best); it.status='ok'; }
+        else if(r.status==='ambiguous'&&it.candidates.length){ it.data=r.best?candToData(r.best):null; it.status='ambiguous'; }
+        else it.status='none';
+      }
+    }catch(e){ it.status='error'; }
+    return it;
+  }
+  function candToData(c){
+    if(!c) return null;
+    return {artist:c.artist||'',title:c.title||'',year:c.year||'',genre:c.genre||'',cover:c.coverBig||c.cover||''};
+  }
+
+  /* ---- serial scanning: the camera stays open ---- */
+  function startBatch(){
+    content().innerHTML=`<div class="spin"><div class="ring"></div>Otwieranie aparatu…</div>`;
+    scanner=openScanner({
+      batch:true,
+      items:()=>queue,
+      onCode:code=>{
+        const dup=queue.find(q=>q.kind==='barcode'&&q.code===code);
+        enqueue({kind:'barcode',code,dup:!!dup});
+      },
+      onPhoto:url=>enqueue({kind:'photo',photo:url}),
+      onDone:()=>{ scanner=null; showReview(); },
+      onCancel:()=>{ scanner=null; showReview(); }
+    });
+  }
+
+  /* ---- four sleeves in one photo ---- */
+  function doQuad(){
+    const inp=document.createElement('input');
+    inp.type='file';inp.accept='image/*';inp.capture='environment';
+    inp.onchange=async()=>{
+      const f=inp.files[0]; if(!f) { showMethods(); return; }
+      content().innerHTML=`<div class="spin"><div class="ring"></div>Dzielę zdjęcie na cztery…</div>`;
+      const raw=await new Promise(res=>{ const r=new FileReader(); r.onload=()=>res(r.result); r.onerror=()=>res(null); r.readAsDataURL(f); });
+      if(!raw){ content().innerHTML='<div class="spin">Błąd zdjęcia</div>'; setTimeout(showMethods,1200); return; }
+      const parts=(await quadrants(raw)).filter(Boolean);
+      if(parts.length<4){ content().innerHTML='<div class="spin">Nie udało się podzielić zdjęcia</div>'; setTimeout(showMethods,1400); return; }
+      content().innerHTML=`
+        <div class="quad">
+          <img src="${raw}" alt="">
+          <div class="gl" style="left:0;right:0;top:50%;height:2px"></div>
+          <div class="gl" style="top:0;bottom:0;left:50%;width:2px"></div>
+          <div class="qn" style="left:8px;top:8px">1</div>
+          <div class="qn" style="right:8px;top:8px">2</div>
+          <div class="qn" style="left:8px;bottom:8px">3</div>
+          <div class="qn" style="right:8px;bottom:8px">4</div>
+        </div>
+        <div class="cands">${parts.map((p,i)=>`<div class="cand"><img src="${p}" alt=""><div class="cn">${i+1}. ${['lewa góra','prawa góra','lewy dół','prawy dół'][i]}</div></div>`).join('')}</div>
+        <div class="srcline">Kolejność: lewa góra → prawa góra → lewy dół → prawy dół</div>
+        <button class="btn" id="quadOk" style="width:100%;margin-top:6px">Dodaj tę czwórkę do listy</button>
+        <button class="btn ghost" id="quadRetry" style="width:100%;margin-top:8px">📸 Zrób jeszcze raz</button>
+        <div style="text-align:center;margin-top:10px"><a href="#" id="quadBack" style="color:var(--amber);font-size:14px">← Wróć</a></div>`;
+      content().querySelector('#quadOk').onclick=()=>{
+        parts.forEach(p=>enqueue({kind:'photo',photo:p}));
+        blip(true);
+        showReview();
+      };
+      content().querySelector('#quadRetry').onclick=()=>doQuad();
+      content().querySelector('#quadBack').onclick=e=>{e.preventDefault();showMethods();};
+    };
+    inp.click();
+  }
+
+  /* ---- review everything at the end ---- */
+  function statusLabel(it){
+    if(it.status==='pending') return '<span style="color:var(--amber)">szukam…</span>';
+    if(it.status==='ok') return '<span style="color:var(--keep)">✓ znaleziono</span>';
+    if(it.status==='ambiguous') return '<span style="color:var(--amber)">? sprawdź okładkę</span>';
+    if(it.status==='error') return '<span style="color:var(--oxblood)">✗ błąd połączenia</span>';
+    return '<span style="color:var(--oxblood)">✗ nie rozpoznano</span>';
+  }
+  function rowInner(it,n){
+    const d=it.data;
+    const thumb=d&&d.cover?`<img src="${esc(d.cover)}" alt="">`:(it.photo?`<img src="${it.photo}" alt="">`:'♪');
+    const title=(d&&d.title?esc(d.title):(it.kind==='barcode'?'kod '+esc(it.code):'Do uzupełnienia'))
+      +(it.dup?' <span style="color:var(--amber);font-weight:400;font-size:12px">· ten kod już był</span>':'');
+    const sub=d&&(d.artist||d.year)?esc([d.artist,d.year].filter(Boolean).join(' · ')):statusLabel(it);
+    const acts=[];
+    if(it.status==='ambiguous'&&it.candidates.length) acts.push('<button class="warn" data-act="pick">🖼 Wybierz okładkę</button>');
+    if(it.status==='none'||it.status==='error') acts.push('<button class="warn" data-act="rescan">📷 Skanuj ponownie</button>');
+    if(it.status!=='pending') acts.push('<button data-act="edit">✏️ '+(it.data?'Popraw':'Wpisz ręcznie')+'</button>');
+    acts.push('<button data-act="del">✕</button>');
+    return `<span class="bn">#${n}</span>
+      <div class="bth">${thumb}</div>
+      <div class="bi"><b>${title}</b><div class="sub">${sub}</div>
+        <div class="bacts">${acts.join('')}</div></div>`;
+  }
+  function touchRow(it){
+    const row=document.querySelector('[data-q="'+it.id+'"]');
+    if(!row) return;
+    const n=queue.indexOf(it)+1;
+    row.className='brow'+(it.status==='none'||it.status==='error'?' bad':(it.status==='pending'||it.status==='ambiguous'?' wait':''));
+    row.innerHTML=rowInner(it,n);
+    bindRow(row,it);
+    const btn=document.querySelector('#addAll');
+    if(btn) btn.textContent=addAllLabel();
+  }
+  function addAllLabel(){
+    const pend=queue.filter(q=>q.status==='pending').length;
+    return pend?`Dodaj wszystkie (${queue.length}) — ${pend} w toku`:`Dodaj wszystkie (${queue.length})`;
+  }
+  function bindRow(row,it){
+    row.querySelectorAll('[data-act]').forEach(b=>b.onclick=e=>{
+      e.stopPropagation();
+      const act=b.dataset.act;
+      if(act==='del'){ queue.splice(queue.indexOf(it),1); showReview(); }
+      else if(act==='pick') pickCandidate(it);
+      else if(act==='rescan') rescan(it);
+      else if(act==='edit') editItem(it);
+    });
+  }
+  function showReview(){
+    if(!queue.length){ showMethods(); return; }
+    content().innerHTML=`
+      <div class="srcline">Sprawdź, popraw, potem dodaj. Kolejność = kolejność pakowania (pierwsza z listy trafia na tył skrzynki).</div>
+      <div id="qlist"></div>
+      <select class="sel" id="crateSelQ" style="margin-top:6px">${state.crates.map(c=>'<option value="'+c.id+'"'+(c.id===crate.id?' selected':'')+'>'+esc(c.name)+'</option>').join('')}</select>
+      <button class="btn" id="addAll" style="width:100%;margin-top:12px;font-size:16px;padding:16px">${addAllLabel()}</button>
+      <button class="btn ghost" id="moreScan" style="width:100%;margin-top:8px">⚡ Skanuj dalej</button>
+      <div style="text-align:center;margin-top:10px"><a href="#" id="qBack" style="color:var(--amber);font-size:14px">← Inne metody</a></div>`;
+    const list=content().querySelector('#qlist');
+    queue.forEach(it=>{
+      list.appendChild(el(`<div class="brow" data-q="${it.id}"></div>`));
+      touchRow(it);           // fills the row and wires its buttons
+    });
+    content().querySelector('#moreScan').onclick=()=>startBatch();
+    content().querySelector('#qBack').onclick=e=>{e.preventDefault();showMethods();};
+    content().querySelector('#addAll').onclick=()=>addAll();
+  }
+  /* The cover picker. Shown whenever the artwork match isn't decisive — better
+     to ask than to file a record under the wrong sleeve. */
+  function pickCovers(o){
+    const cs=(o.candidates||[]).slice(0,6);
+    content().innerHTML=`
+      <h3 style="margin:2px 0 4px;font-size:17px">Która to płyta?</h3>
+      <div class="srcline">Dopasowanie liczone z samej okładki, nie tylko z nazwy</div>
+      <div style="display:flex;gap:10px;align-items:flex-start;margin-bottom:10px">
+        <div class="bth" style="width:92px;height:92px;border-radius:12px">${o.photo?`<img src="${o.photo}" alt="">`:'♪'}</div>
+        <div style="flex:1;font-size:13px;color:var(--faint)">Twoje zdjęcie. Wybierz okładkę, która się z nim zgadza.</div>
+      </div>
+      <div class="cands">${cs.map((c,i)=>`<div class="cand" data-c="${i}">
+        <img src="${esc(c.cover||c.coverBig||'')}" alt="" loading="lazy">
+        <div class="cn">${esc(c.title||'')}<div class="cm">${c.dist!==undefined?Math.round((1-Math.min(1,c.dist))*100)+'%':''}</div></div></div>`).join('')}</div>
+      <button class="btn ghost" id="pickNone" style="width:100%">Żadna z nich — wpisz ręcznie</button>
+      <div style="text-align:center;margin-top:10px"><a href="#" id="pickBack" style="color:var(--amber);font-size:14px">← Wróć</a></div>`;
+    content().querySelectorAll('[data-c]').forEach(n=>n.onclick=()=>o.onPick(cs[+n.dataset.c]));
+    content().querySelector('#pickNone').onclick=()=>o.onNone();
+    content().querySelector('#pickBack').onclick=e=>{e.preventDefault();o.onBack();};
+  }
+  function pickCandidate(it){
+    pickCovers({photo:it.photo,candidates:it.candidates,
+      onPick:c=>{ it.data=candToData(c); it.status='ok'; showReview(); },
+      onNone:()=>editItem(it), onBack:()=>showReview()});
+  }
+  function rescan(it){
+    openScanner({
+      onCode:code=>{
+        it.kind='barcode'; it.code=code; it.status='pending'; it.data=null; it.candidates=[];
+        showReview();
+        pool.run(()=>resolveItem(it)).then(()=>touchRow(it));
+      },
+      onCancel:()=>showReview()
+    });
+  }
+  function editItem(it){
+    showManual({
+      artist:(it.data&&it.data.artist)||'', title:(it.data&&it.data.title)||'',
+      year:(it.data&&it.data.year)||'', genre:(it.data&&it.data.genre)||'',
+      mood:it.mood||'', rating:it.rating||0,
+      cover:(it.data&&it.data.cover)||it.photo||null,
+      coverIsLocal:!(it.data&&it.data.cover),
+      queueItem:it
+    });
+  }
+  async function addAll(){
+    const targetId=content().querySelector('#crateSelQ').value;
+    let pos=crateAlbums(targetId).length;
+    let added=0,placeholders=0;
+    for(const it of queue){
+      const d=it.data||{};
+      const id=uid();
+      pos++;
+      const hasData=!!(d.title||d.artist);
+      let cover='';
+      const src=d.cover||it.photo||'';
+      if(src&&src.startsWith('data:')){ await saveCover(id,src); cover='local'; }
+      else if(src){ cover=src; }
+      state.albums.push({id,crateId:targetId,position:pos,
+        artist:d.artist||'',title:d.title||'',genre:d.genre||'',mood:it.mood||'',
+        year:d.year||'',cover,rating:it.rating||0,
+        pending:hasData?undefined:true, code:it.code||undefined});
+      if(hasData) added++; else placeholders++;
+    }
+    await persist();
+    addedThisSession+=queue.length;
+    queue.length=0;
+    const qp=sheet.querySelector('#qpill');qp.style.display='flex';
+    qp.innerHTML=`<span>📦</span><span>Dodano <b>${addedThisSession}</b> ${plPly(addedThisSession)} w tej sesji</span>`;
+    toast(placeholders?`Dodano ${added} · ${placeholders} do uzupełnienia`:`Dodano ${added} ${plPly(added)}`);
+    showMethods();
   }
 
   /* ---- Barcode scan ---- */
@@ -657,8 +1442,8 @@ function openCapture(crate){
       } else {
         content().innerHTML=`<div style="text-align:center;padding:20px 0">
           <div style="font-size:42px;margin-bottom:12px">✗</div>
-          <div style="font-size:16px;margin-bottom:8px">Kodu <b>${esc(code)}</b> nie ma w bazie</div>
-          <div style="font-size:14px;color:var(--faint);margin-bottom:20px">Spróbuj zdjęcia okładki lub wpisz ręcznie</div>
+          <div style="font-size:16px;margin-bottom:8px">Kodu <b>${esc(code)}</b> nie ma w żadnej z baz</div>
+          <div style="font-size:14px;color:var(--faint);margin-bottom:20px">Sprawdzone: MusicBrainz i iTunes, we wszystkich wariantach numeru. Płyty tłoczone przed latami 80. często w ogóle nie mają kodu — wtedy najpewniejsze jest zdjęcie okładki.</div>
           <div style="display:flex;gap:10px">
             <button class="btn ghost" id="retryPhoto" style="flex:1">📸 Zdjęcie okładki</button>
             <button class="btn ghost" id="retryManual" style="flex:1">✏️ Ręcznie</button>
@@ -686,21 +1471,20 @@ function openCapture(crate){
       content().innerHTML=`<div class="spin"><div class="ring"></div>Przetwarzanie zdjęcia…</div>`;
       const dataUrl=await downscale(f);
       if(!dataUrl){content().innerHTML=`<div>Błąd zdjęcia</div>`;return;}
-      content().innerHTML=`<div class="spin"><div class="ring"></div>Claude analizuje okładkę…</div>`;
+      content().innerHTML=`<div class="spin"><div class="ring"></div>Porównuję okładkę z bazą…</div>`;
       try{
-        const res=await fetch(CONFIG.CLAUDE_PROXY.replace('/api/claude','')+'/api/claude',{
-          method:'POST',headers:{'Content-Type':'application/json'},
-          body:JSON.stringify({image:dataUrl,query:'Identify this vinyl record album from the cover photo.'})
-        });
-        const d=await res.json();
-        if(d&&(d.title||d.artist)){
-          // fetch proper cover + enrich genre from iTunes
-          const apiCover=await getApiCover(d.artist||'',d.title||'');
-          if(apiCover&&apiCover.cover) d.cover=apiCover.cover;
-          else d.cover=dataUrl; // fallback to user photo if no db cover
-          if(apiCover&&apiCover.year&&!d.year) d.year=apiCover.year;
-          if(apiCover&&apiCover.genre&&!d.genre) d.genre=apiCover.genre;
+        const r=await identifyPhoto(dataUrl);
+        if(r.status==='ok'){
+          const d=candToData(r.best);
+          d.match=Math.round((1-Math.min(1,r.best.dist))*100);
           showResult(d);
+        } else if(r.candidates&&r.candidates.length){
+          // right artist, wrong record is the classic trap — make the user
+          // confirm against the actual artwork instead of guessing for them
+          pickCovers({photo:dataUrl,candidates:r.candidates,
+            onPick:c=>showResult(candToData(c)),
+            onNone:()=>showManual({cover:dataUrl,coverIsLocal:true,artist:(r.guess&&r.guess.artist)||'',title:(r.guess&&r.guess.title)||''}),
+            onBack:()=>showMethods()});
         } else {
           content().innerHTML=`<div style="text-align:center;padding:20px 0">
             <div style="font-size:42px;margin-bottom:12px">🤔</div>
@@ -712,7 +1496,7 @@ function openCapture(crate){
             <div style="margin-top:12px"><a href="#" id="retryBack2" style="color:var(--amber);font-size:14px">← Wróć</a></div>
           </div>`;
           content().querySelector('#retryPhoto2').onclick=()=>doPhoto();
-          content().querySelector('#retryManual2').onclick=()=>showManual();
+          content().querySelector('#retryManual2').onclick=()=>showManual({cover:dataUrl,coverIsLocal:true});
           content().querySelector('#retryBack2').onclick=e=>{e.preventDefault();showMethods();};
         }
       }catch(e){
@@ -745,6 +1529,8 @@ function openCapture(crate){
         <div style="font-size:22px;font-weight:700">${esc(d.title||'')}</div>
         <div style="font-size:17px;color:var(--paper-2);margin-top:6px">${esc(d.artist||'')}</div>
         <div style="font-size:15px;color:var(--faint);margin-top:4px">${[d.year,d.genre,d.mood].filter(Boolean).join(' · ')}</div>
+        ${d.match?`<div class="srcline">zgodność okładki ${d.match}%</div>`:''}
+        ${d.srcs&&d.srcs.length>1?`<div class="srcline">potwierdzone przez: ${d.srcs.join(' + ')}</div>`:''}
       </div>
       <div class="fld"><label>Ocena</label><div id="rPick" class="starrow">${[1,2,3,4,5].map(n=>'<span class="star" data-r="'+n+'">★</span>').join('')}</div></div>
       <select class="sel" id="crateSel2" style="margin-top:8px">${state.crates.map(c=>'<option value="'+c.id+'"'+(c.id===crate.id?' selected':'')+'>'+esc(c.name)+'</option>').join('')}</select>
@@ -793,6 +1579,7 @@ function openCapture(crate){
   /* ---- Manual form ---- */
   function showManual(prefill){
     let coverVal=null,coverIsLocal=false,mood='',rating=0;
+    const qItem=prefill&&prefill.queueItem;   // editing a row of the bulk queue
     content().innerHTML=`
       <div id="prev" class="cover-prev"><div class="ph">Zrób zdjęcie lub znajdź album</div></div>
       <div id="status" class="status-line"></div>
@@ -807,8 +1594,8 @@ function openCapture(crate){
         <button class="btn ghost" id="takePhoto" style="flex:1">📸 Zdjęcie okładki</button>
       </div>
       <input type="file" id="file" accept="image/*" capture="environment" hidden>
-      <select class="sel" id="crateSel3" style="margin-top:12px">${state.crates.map(c=>'<option value="'+c.id+'"'+(c.id===crate.id?' selected':'')+'>'+esc(c.name)+'</option>').join('')}</select>
-      <button class="btn" id="addManual" style="margin-top:14px;width:100%">Dodaj do skrzynki</button>
+      <select class="sel" id="crateSel3" style="margin-top:12px${qItem?';display:none':''}">${state.crates.map(c=>'<option value="'+c.id+'"'+(c.id===crate.id?' selected':'')+'>'+esc(c.name)+'</option>').join('')}</select>
+      <button class="btn" id="addManual" style="margin-top:14px;width:100%">${qItem?'Zapisz na liście':'Dodaj do skrzynki'}</button>
       <div style="text-align:center;margin-top:10px"><a href="#" id="backToMethods3" style="color:var(--amber);font-size:14px">← Wróć</a></div>`;
 
     if(prefill){
@@ -900,7 +1687,7 @@ function openCapture(crate){
     content().querySelector('#artist').addEventListener('input',autoSearch);
     content().querySelector('#title').addEventListener('input',autoSearch);
     // back
-    content().querySelector('#backToMethods3').onclick=e=>{e.preventDefault();showMethods();};
+    content().querySelector('#backToMethods3').onclick=e=>{e.preventDefault();qItem?showReview():showMethods();};
     // add
     content().querySelector('#addManual').onclick=async()=>{
       const artist=content().querySelector('#artist').value.trim();
@@ -908,6 +1695,11 @@ function openCapture(crate){
       if(!artist&&!title){toast('Najpierw podaj wykonawcę lub tytuł');return;}
       const year=content().querySelector('#year').value.trim();
       const genre=content().querySelector('#genre').value.trim();
+      if(qItem){
+        qItem.data={artist,title,year,genre,cover:coverVal||''};
+        qItem.mood=mood; qItem.rating=rating; qItem.status='ok';
+        showReview(); return;
+      }
       const targetId=content().querySelector('#crateSel3').value;
       const nextPos=crateAlbums(targetId).length+1;
       const id=uid();
@@ -929,14 +1721,65 @@ function openCapture(crate){
   showMethods();
   sheet.querySelector('.grab').onclick=()=>closeModal();
 }
+/* Plain resize — used when the crop is already known (a viewfinder guide). */
+function resizeSquare(drawable,max){
+  const w=drawable.width||drawable.videoWidth,h=drawable.height||drawable.videoHeight;
+  const side=Math.min(w,h),s=Math.min(1,(max||600)/side);
+  const cv=document.createElement('canvas');
+  cv.width=cv.height=Math.round(side*s);
+  cv.getContext('2d').drawImage(drawable,Math.floor((w-side)/2),Math.floor((h-side)/2),side,side,0,0,cv.width,cv.height);
+  return cv.toDataURL('image/jpeg',0.82);
+}
+/* Cut the square guide out of the live viewfinder. The video is drawn with
+   object-fit:cover, so the on-screen box has to be mapped back through that
+   scale before it means anything in video pixels. */
+function cropFromVideo(v,rect){
+  try{
+    const box=v.getBoundingClientRect();
+    const vw=v.videoWidth,vh=v.videoHeight;
+    if(!vw||!vh) return null;
+    const s=Math.max(box.width/vw,box.height/vh);
+    const offX=(vw*s-box.width)/2,offY=(vh*s-box.height)/2;
+    const side=Math.round(Math.min(rect.width,rect.height)/s);
+    const sx=Math.max(0,Math.round((rect.left-box.left+offX)/s));
+    const sy=Math.max(0,Math.round((rect.top-box.top+offY)/s));
+    const cv=document.createElement('canvas');
+    const out=Math.min(600,side);
+    cv.width=cv.height=out;
+    cv.getContext('2d').drawImage(v,sx,sy,side,side,0,0,out,out);
+    return cv.toDataURL('image/jpeg',0.82);
+  }catch(e){ return null; }
+}
+/* Four sleeves laid out in a square, photographed in one shot. Reading order:
+   top-left, top-right, bottom-left, bottom-right. */
+async function quadrants(src){
+  const im=await loadImg(src);
+  if(!im) return [];
+  const hw=Math.floor(im.width/2),hh=Math.floor(im.height/2);
+  const out=[];
+  for(const [x,y] of [[0,0],[hw,0],[0,hh],[hw,hh]]){
+    const cv=document.createElement('canvas');
+    cv.width=hw; cv.height=hh;
+    cv.getContext('2d').drawImage(im,x,y,hw,hh,0,0,hw,hh);
+    out.push(trimSquare(cv,600));
+  }
+  return out;
+}
 function downscale(file){
   return new Promise(res=>{
     const img=new Image(),url=URL.createObjectURL(file);
-    img.onload=()=>{
+    img.onload=()=>{ const d=trimSquare(img,600); URL.revokeObjectURL(url); res(d); };
+    img.onerror=()=>{URL.revokeObjectURL(url);res(null);};
+    img.src=url;
+  });
+}
+/* Find the sleeve against its background, square it off, shrink it. */
+function trimSquare(img,max){
+  try{
       // Step 1: draw full image
       const tmp=document.createElement('canvas');
       tmp.width=img.width;tmp.height=img.height;
-      const tctx=tmp.getContext('2d');
+      const tctx=tmp.getContext('2d',{willReadFrequently:true});
       tctx.drawImage(img,0,0);
       // Step 2: auto-trim — detect background and crop
       const idata=tctx.getImageData(0,0,tmp.width,tmp.height);
@@ -968,16 +1811,12 @@ function downscale(file){
       if(cw>ch*1.15){cx+=Math.floor((cw-side)/2);cw=side;}
       else if(ch>cw*1.15){cy+=Math.floor((ch-side)/2);ch=side;}
       // Step 4: downscale to max 600px
-      const max=600,s=Math.min(1,max/Math.max(cw,ch));
+      const s=Math.min(1,(max||600)/Math.max(cw,ch));
       const cv=document.createElement('canvas');
       cv.width=Math.round(cw*s);cv.height=Math.round(ch*s);
       cv.getContext('2d').drawImage(tmp,cx,cy,cw,ch,0,0,cv.width,cv.height);
-      URL.revokeObjectURL(url);
-      res(cv.toDataURL('image/jpeg',0.82));
-    };
-    img.onerror=()=>{URL.revokeObjectURL(url);res(null);};
-    img.src=url;
-  });
+      return cv.toDataURL('image/jpeg',0.82);
+  }catch(e){ try{ return resizeSquare(img,max||600); }catch(e2){ return null; } }
 }
 
 /* close summary */
@@ -1110,9 +1949,10 @@ function openAlbumDetail(a){
   }
   if(visStart>0) posVisual='<div style="text-align:center;color:var(--faint);font-size:13px;padding:4px">\u27F5 ty\u0142 skrzynki</div>'+posVisual;
   if(visEnd<albs.length) posVisual+='<div style="text-align:center;color:var(--faint);font-size:13px;padding:4px">prz\u00F3d skrzynki \u27F6</div>';
-  const sheet=modal('<div class="cover-prev" style="height:240px;border-radius:16px">'+(a.cover?'<img data-cover="'+a.id+'" alt="">':'<div class="ph" style="font-size:40px">\u266A</div>')+'</div><div style="text-align:center;padding:14px 0 6px"><div style="font-family:var(--disp);font-size:24px;font-weight:800;line-height:1.2">'+(esc(a.title)||'Bez tytu\u0142u')+'</div><div style="font-size:18px;color:var(--paper-2);margin-top:6px">'+(esc(a.artist)||'Nieznany')+'</div><div style="font-size:16px;color:var(--faint);margin-top:4px">'+(a.year||'')+' '+(a.genre?'\u00B7 '+a.genre:'')+' '+(a.mood?'\u00B7 '+a.mood:'')+'</div>'+(a.rating?'<div class="stars" style="font-size:20px;margin-top:8px">'+('\u2605'.repeat(a.rating)+'\u2606'.repeat(5-a.rating))+'</div>':'')+'</div><div class="card" style="padding:14px;margin:10px 0"><div style="font-weight:700;font-size:15px;margin-bottom:10px">\uD83D\uDCE6 '+esc(crate?crate.name:'')+' \u2014 miejsce #'+a.position+' z '+total+'</div><div style="display:flex;flex-direction:column;gap:4px">'+posVisual+'</div></div><button class="btn ghost" id="goToCrate" style="width:100%;margin-top:6px">Otw\u00F3rz skrzynk\u0119</button>');
+  const sheet=modal('<div class="cover-prev" style="height:240px;border-radius:16px">'+(a.cover?'<img data-cover="'+a.id+'" alt="">':'<div class="ph" style="font-size:40px">\u266A</div>')+'</div><div style="text-align:center;padding:14px 0 6px"><div style="font-family:var(--disp);font-size:24px;font-weight:800;line-height:1.2">'+(esc(a.title)||'Bez tytu\u0142u')+'</div><div style="font-size:18px;color:var(--paper-2);margin-top:6px">'+(esc(a.artist)||'Nieznany')+'</div><div style="font-size:16px;color:var(--faint);margin-top:4px">'+(a.year||'')+' '+(a.genre?'\u00B7 '+a.genre:'')+' '+(a.mood?'\u00B7 '+a.mood:'')+'</div>'+(a.rating?'<div class="stars" style="font-size:20px;margin-top:8px">'+('\u2605'.repeat(a.rating)+'\u2606'.repeat(5-a.rating))+'</div>':'')+'</div><div class="card" style="padding:14px;margin:10px 0"><div style="font-weight:700;font-size:15px;margin-bottom:10px">\uD83D\uDCE6 '+esc(crate?crate.name:'')+' \u2014 miejsce #'+a.position+' z '+total+'</div><div style="display:flex;flex-direction:column;gap:4px">'+posVisual+'</div></div><button class="btn ghost" id="goToCrate" style="width:100%;margin-top:6px">Otw\u00F3rz skrzynk\u0119</button><button class="btn ghost" id="editThis" style="width:100%;margin-top:8px">\u270F\uFE0F Edytuj p\u0142yt\u0119</button>');
   hydrateCovers(sheet);
   sheet.querySelector('#goToCrate').onclick=()=>{closeModal();state.tab='crates';state.crateId=a.crateId;render();};
+  sheet.querySelector('#editThis').onclick=()=>{closeModal();openEditAlbum(a);};
 }
 
 /* ===== SEARCH ===== */
