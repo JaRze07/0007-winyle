@@ -1,71 +1,73 @@
 {
   "crates": [
     {
-      "id": "mqr13qgs7pv4",
-      "name": "Jazz",
+      "id": "mtzxz41kq4c9",
+      "name": "Niedzielny jazz",
+      "tagColor": "#EFAD45",
       "closed": true
+    },
+    {
+      "id": "mtzxz41k9b2c",
+      "name": "Sobotni wieczór",
+      "tagColor": "#C04A3E",
+      "closed": false
     }
   ],
   "albums": [
     {
-      "id": "mqr16zmxyhh6",
-      "crateId": "mqr13qgs7pv4",
-      "position": 2,
-      "artist": "The Oscar Peterson Trio",
-      "title": "We Get Requests",
-      "genre": "Jazz",
-      "mood": "Spokojny",
-      "year": "1964",
-      "cover": "https://is1-ssl.mzstatic.com/image/thumb/Music116/v4/6a/92/89/6a9289d1-69aa-6e20-7cef-4279b6cc415d/15UMGIM33844.rgb.jpg/600x600bb.jpg",
-      "rating": 0
-    },
-    {
-      "id": "mqr18vcusiiw",
-      "crateId": "mqr13qgs7pv4",
+      "id": "mtzxz41kmovd",
+      "crateId": "mtzxz41kq4c9",
       "position": 1,
-      "artist": "The Oscar Peterson Trio",
-      "title": "Easy And Easy",
+      "artist": "Bill Evans",
+      "title": "Sunday at the Village Vanguard",
       "genre": "Jazz",
-      "mood": "Spokojny",
-      "year": "1970",
-      "cover": "https://is1-ssl.mzstatic.com/image/thumb/Music112/v4/ab/c4/fc/abc4fc25-9e4e-810b-d438-45722722c3b5/06UMGIM09109.rgb.jpg/600x600bb.jpg",
-      "rating": 0
+      "mood": "Nocny",
+      "year": "1961",
+      "cover": ""
     },
     {
-      "id": "mqr1a4kpftb8",
-      "crateId": "mqr13qgs7pv4",
+      "id": "mtzxz41kntak",
+      "crateId": "mtzxz41kq4c9",
+      "position": 2,
+      "artist": "John Coltrane",
+      "title": "A Love Supreme",
+      "genre": "Jazz",
+      "mood": "Skupienie",
+      "year": "1965",
+      "cover": ""
+    },
+    {
+      "id": "mtzxz41k0i94",
+      "crateId": "mtzxz41kq4c9",
       "position": 3,
-      "artist": "Oscar Peterson",
-      "title": "Mellow Mood",
-      "genre": "Jazz",
-      "mood": "Spokojny",
-      "year": "1971",
-      "cover": "https://is1-ssl.mzstatic.com/image/thumb/Music112/v4/6e/67/14/6e671438-a33b-660e-fd73-65e49ba340b9/cover.jpg/600x600bb.jpg",
-      "rating": 2
+      "artist": "Nina Simone",
+      "title": "Pastel Blues",
+      "genre": "Soul",
+      "mood": "Melancholijny",
+      "year": "1965",
+      "cover": ""
     },
     {
-      "id": "mqr1bp8stjle",
-      "crateId": "mqr13qgs7pv4",
-      "position": 4,
-      "artist": "Elvis Presley",
-      "title": "Way Down in the Jungle Room",
-      "genre": "Country",
-      "mood": "Spokojny",
-      "year": "2016",
-      "cover": "https://is1-ssl.mzstatic.com/image/thumb/Music20/v4/e9/6b/86/e96b8682-b2f3-a7cc-54f7-d0092a61a751/886445917055.jpg/600x600bb.jpg",
-      "rating": 0
+      "id": "mtzxz41k9psn",
+      "crateId": "mtzxz41k9b2c",
+      "position": 1,
+      "artist": "Talking Heads",
+      "title": "Remain in Light",
+      "genre": "Rock",
+      "mood": "Energetyczny",
+      "year": "1980",
+      "cover": ""
     },
     {
-      "id": "mqr1jqx3nd2q",
-      "crateId": "mqr13qgs7pv4",
-      "position": 5,
-      "artist": "Erroll Garner",
-      "title": "Concert by the Sea",
-      "genre": "Jazz",
-      "mood": "Spokojny",
-      "year": "1955",
-      "cover": "https://is1-ssl.mzstatic.com/image/thumb/Music124/v4/93/9d/e1/939de197-b680-4c92-4141-08fc38a1d6d1/mzi.trcydnrm.jpg/600x600bb.jpg",
-      "rating": 0
+      "id": "mtzxz41k610h",
+      "crateId": "mtzxz41k9b2c",
+      "position": 2,
+      "artist": "Curtis Mayfield",
+      "title": "Super Fly",
+      "genre": "Funk",
+      "mood": "Impreza",
+      "year": "1972",
+      "cover": ""
     }
   ],
   "covers": {}
