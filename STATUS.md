@@ -10,7 +10,7 @@
 
 ## Specification
 
-Google Cloud project: `jr77-0007-winyle` (JR77 folder, billing linked) for any Google APIs the app needs.
+Google Cloud project: `jr07-0007-winyle` (JR77 folder, billing linked) for any Google APIs the app needs.
 
 Winyle - vinyl collection catalogue PWA + TWA APK.
 
