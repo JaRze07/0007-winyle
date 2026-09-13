@@ -49,7 +49,7 @@ It's a static site — no build step.
   so use a real deploy for those.
 - **Deploy (recommended):** push to GitHub and enable **GitHub Pages** (Settings →
   Pages → Build from branch → `main` / root). Your app is then live at
-  `https://JaRze07.github.io/winyle/` over HTTPS — barcode scanning and PWA install
+  `https://jarze07.github.io/0007-winyle/` over HTTPS — barcode scanning and PWA install
   both work.
 
 ## Install on a phone
@@ -132,7 +132,7 @@ git init
 git add .
 git commit -m "Winyle"
 git branch -M main
-git remote add origin https://github.com/JaRze07/winyle.git
+git remote add origin https://github.com/JaRze07/0007-winyle.git
 git push -u origin main
 ```
 

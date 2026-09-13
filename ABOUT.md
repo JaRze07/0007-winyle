@@ -14,7 +14,7 @@ can't slip through. Barcodes are checked against several databases in every digi
 Plus drag-to-reorder, and a genre/mood "what to listen to" carousel that points you to the box
 and slot. Genres are derived from what you actually own.
 
-**Status:** Live — `JaRze07/winyle`, served at `https://jarze07.github.io/winyle/`. No build step.
+**Status:** Live — `JaRze07/0007-winyle`, served at `https://jarze07.github.io/0007-winyle/`. No build step.
 
 **Run:** open `index.html` in a browser (barcode camera + install need HTTPS → use GitHub Pages).
 Full setup (Worker, Discogs, Claude proxy, install) in [README.md](README.md).

@@ -1,8 +1,8 @@
 # Project7 - Winyle — context for Claude Code
 
 ## Current state
-Published and live — repo `JaRze07/winyle`, GitHub Pages from `main`/root at
-<https://jarze07.github.io/winyle/>. Also wrapped as a TWA Android app
+Published and live — repo `JaRze07/0007-winyle`, GitHub Pages from `main`/root at
+<https://jarze07.github.io/0007-winyle/>. Also wrapped as a TWA Android app
 (`winyle.apk`, package `com.jarze07.winyle`, verified by `.well-known/assetlinks.json`).
 Data syncs through a Cloudflare Worker at `winyle-api.winyle-jr.workers.dev`
 (`/api/db` for the collection, `/api/claude` for album lookup — that Worker holds
