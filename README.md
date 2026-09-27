@@ -9,14 +9,24 @@ collection syncs across devices.
 
 **Packing a whole box — serial scanning.** The camera stays open. Scan a barcode,
 move to the next record, scan again — you are never made to wait for a match.
+A switch at the top of the viewfinder moves between the three ways of feeding the
+same queue — **barcode**, a single **cover** shot, or a **square of four** —
+without leaving the camera.
 Each record is looked up in the background while you keep going, and you check
 the whole batch at the end. Anything that couldn't be identified stays in the
 list as a placeholder in its own position, so you can re-scan it or type it in
 without losing track of the packing order.
 
-**Four at a time.** Lay four sleeves out in a square and take one photo. They are
-read top-left, top-right, bottom-left, bottom-right and go into the queue in that
-order.
+**Four at a time — square after square.** The camera stays open here too. Lay
+four sleeves out in a square, press the shutter, lay the next four, press again,
+and keep going; the frame shows a 2×2 grid with the corners numbered so you know
+which sleeve ends up where. Each shot is split top-left, top-right, bottom-left,
+bottom-right and the four go into the queue in that order, identified in the
+background while you carry on. A quarter with nothing in it is dropped, so a last
+square holding only two records doesn't leave two empty rows behind. You review
+the lot at the end, exactly as with serial scanning. On a browser with no camera
+scanner the old one-shot route still works: take a single photo with the phone
+camera and confirm the split.
 
 **One at a time**, when that's all you need:
 

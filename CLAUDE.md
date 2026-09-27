@@ -55,13 +55,33 @@ Android app later.
 - **Add a record — 5 ways:**
   1. **Pakowanie seryjne** — the camera stays open; every barcode read and every
      sleeve shot is queued and identified in the background. You review at the end.
-  2. **Cztery na raz** — one photo of four sleeves in a square, split
-     top-left → top-right → bottom-left → bottom-right.
+     One overlay, three segments (`#scanseg`): `code` / `cover` / `quad`; you switch
+     between them without leaving the camera, and `openScanner({startMode})` decides
+     which one you land on.
+  2. **Cztery na raz** — the same open camera in `quad` mode: a square guide with a
+     2×2 grid and numbered corners, shutter, split top-left → top-right →
+     bottom-left → bottom-right, four items queued, **stay in the camera** and shoot
+     the next square. The crop is taken at `cropFromVideo(v,g,1200)` so each quarter
+     keeps ~450-600 px. `emptyQuadrant` drops a quarter that is bare surface, so a
+     last square holding two records makes two items and not four. It needs two
+     independent things to agree: <6% of the quarter differs from `surfaceColour`
+     (the median colour of the *whole* shot's rim — read from the whole shot, not
+     from the quarter, or a plain sleeve filling its quarter becomes its own
+     background) **and** `hasOutline` finds nothing with an edge (steps of >24
+     summed over the channels — so a dark seam counts like a light one — between
+     the averages of four pixels either side, which is what lets the step sit that
+     low without grain tripping it). Both bars sit where only bare surface passes:
+     an empty square left in the review list costs one tap, a dropped record loses
+     its slot silently. Without
+     `BarcodeDetector`/camera the menu falls back to the old one-shot file-input
+     path (`doQuad`).
   3. **Barcode** — single scan, as before.
   4. **Zdjęcie okładki** — single photo, cover-matched.
   5. **Manual** — type fields + photograph the sleeve.
 - **The bulk queue** lives inside `openCapture`. Items are `pending` → `ok` /
-  `ambiguous` / `none`; a `makePool(3)` limits background lookups. Nothing is
+  `ambiguous` / `none`; a `makePool(3)` limits background lookups (a square of
+  four lands four photo lookups at once — the Claude proxy, not the pool, is the
+  limit; re-measure on the phone before raising it). Nothing is
   written to the collection until "Dodaj wszystkie". Unidentified items can be
   added as **placeholder records** (`album.pending`) that hold their slot and are
   finished later via `openEditAlbum`.
@@ -99,8 +119,24 @@ No test framework. What has actually been verified, and how:
 - Cover matching — headless Edge over the DevTools protocol, 27 Oscar Peterson
   sleeves, each re-photographed synthetically (rotation, lighting gradient,
   noise, JPEG). 26/27 top-1 correct, 23 auto-accepted, **0 wrong auto-accepts**.
-- Camera paths (live scanning, the cover shutter) can only be tested on a phone.
-  The video→crop mapping in `cropFromVideo` was verified analytically instead.
+- `surfaceColour` + `emptyQuadrant` + `hasOutline` — extracted and run under Node
+  over whole synthetic 1200x1200 squares of four (a `drawImage`/`getImageData`
+  stand-in does the splitting), scoring each quarter kept or dropped: artwork /
+  plain black / plain white sleeves with the surface showing, a last row of two,
+  a single record in the square, sleeves abutting each other and the frame with
+  only the seams visible, sleeves the same colour as the table (edge + shadow),
+  plain unprinted white sleeves on a cream table at three shadow strengths, and
+  bare surface. 15/15 as intended. A grain sweep (±4 to ±28) confirms the
+  failure direction: from ±18 up, empty quarters start surviving into the review
+  list and no record is ever dropped. The blind spot, measured by sweeping the
+  outline step against a flat sleeve with no edge and no shadow: a sleeve within
+  ~8 levels a channel of the surface colour. Run-averaging the step is what got
+  that number down — single-pixel steps needed >45 to survive ±10 grain and blinded
+  it out to ~15 levels, four-pixel averages hold the same grain at >24.
+- Camera paths (live scanning, the cover shutter, the `quad` shutter) can only be
+  tested on a phone. The video→crop mapping in `cropFromVideo` was verified
+  analytically instead, including the `max` argument (it never upscales: the crop
+  is capped by how much video the guide actually covers).
 
 
 # JR07 workspace rules

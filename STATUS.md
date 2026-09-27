@@ -2,32 +2,11 @@
 
 ## Pending
 
-- **Agent task (Jacek, 2026-09-27): continuous four-at-a-time scanning.** Today "Cztery na raz (kwadrat)" is one-shot:
-  native camera → split → preview → confirm → review list, and you go back to the menu for the next four. Jacek wants
-  to lay four sleeves in a square, shoot, lay the next four, shoot, and keep going; identification runs in the
-  background and everything is reviewed afterwards (this stays a private app for Jacek and his dad). Build it in
-  `index.html`:
-  1. In `openScanner` (batch mode) add a third segment to `#scanseg`: **Kod kreskowy · Okładka · Czwórka**. In
-     `quad` mode show a square guide like `.cguide` but with a 2×2 grid drawn inside (two amber lines) and the digits
-     1–4 in the corners (top-left, top-right, bottom-left, bottom-right); show the shutter; message
-     "Ułóż cztery okładki w kwadrat i naciśnij spust".
-  2. Shutter in `quad` mode: `cropFromVideo(v, guideRect)` but at full guide resolution (add a `max` parameter,
-     use 1200 so each quadrant is ~600 px), then `quadrants(dataUrl)` → call `opt.onQuad(parts)`; flash + blip once;
-     stay in the camera. Nothing is looked up while you shoot.
-  3. In `openCapture`: `onQuad: parts => parts.forEach(p => enqueue({kind:'photo', photo:p, quad:true}))`, so the four
-     land in the queue in reading order as 'pending' and the existing pool (3) resolves them via `identifyPhoto`.
-     Bump the counter by 4 and show the four chips in `#bstrip`.
-  4. The menu button "Cztery na raz (kwadrat)" starts the batch scanner directly in `quad` mode (`startBatch('quad')`);
-     keep the old file-input path as a fallback when `BarcodeDetector`/camera is unavailable (the current `doQuad`).
-  5. Review (`showReview`) unchanged: pending → ok / ambiguous / none, placeholders keep their slot, "Wybierz okładkę"
-     and "Skanuj ponownie" work per item. A quadrant that is empty background (all four corners near the background
-     colour after `trimSquare`) is dropped silently, so a last row of two sleeves does not create two junk items.
-  6. Pool: raise to 4 while quad items are queued, or keep 3 — measure on the phone; the Claude proxy is the slow
-     step (one call per sleeve).
-  7. README "Four at a time" paragraph → describe the continuous flow; STATUS Done entry; bump the `sw.js` cache
-     version so phones pick up the new build; push to `main` (GitHub Pages deploys it).
-  Test: on the phone, https://jarze07.github.io/0007-winyle/ → skrzynka → Dodaj płytę → Cztery na raz; shoot three
-  squares in a row, then Gotowe; all 12 appear in order and resolve in the background
+- **Check continuous four-at-a-time on the phone** (the only part that can't be checked here):
+  <https://jarze07.github.io/0007-winyle/> → skrzynka → Dodaj płytę → Cztery na raz; shoot three squares in a
+  row, then Gotowe — all 12 should appear in packing order and resolve in the background. Also worth timing:
+  the background pool is still 3, and a square lands four Claude-proxy lookups at once; raise it to 4 in
+  `openCapture` only if the queue, not the proxy, turns out to be the thing waiting.
 - Rebuild `winyle.apk`: TWA still opens the dead `/winyle/` URL; `android/` project must be recreated
 - Put the Cloudflare Worker source into the repo and redeploy via wrangler
 - Add auth to `POST /api/db` (anyone with the Worker URL can write)
@@ -42,9 +21,35 @@ is the alternative if Pages ever becomes a limit.
 
 Winyle - vinyl collection catalogue PWA + TWA APK.
 
+Bulk packing is one camera overlay with three segments — **Kod kreskowy / Okładka / Czwórka** — all feeding one
+review queue, so nothing interrupts the packing rhythm. `Czwórka` shows a square guide with a 2x2 grid and the
+corners numbered 1-4: lay four sleeves out, press the shutter, lay the next four, press again. Each shot is cut
+out of the viewfinder at full guide resolution, split top-left -> top-right -> bottom-left -> bottom-right, and
+the four sleeves are queued and identified in the background while you carry on. A quarter that is nothing but
+the surface the records lie on is dropped, so a last square holding two records creates two items, not four.
+Everything is reviewed at the end; unidentified items can still be added as placeholders that hold their slot.
+Phones without `BarcodeDetector`/camera fall back to the previous one-shot file-input split.
+
 Full description and setup: `README.md` in this repo.
 
 ## Done
 
+- Done 2026-09-27: **continuous four-at-a-time scanning.** `openScanner` gained a third segment (`quad`) and a
+  `startMode`, so "Cztery na raz" is no longer one-shot: the camera stays open and you shoot square after square.
+  New: the 2x2 guide overlay with numbered corners (`.cguide.quad` is wider than the single-sleeve guide - easier
+  to lay four records into and it hands the crop more sensor pixels), a `max` argument on `cropFromVideo` (1200 for
+  a square, ~450-600 px per sleeve on a phone; it never upscales), `surfaceColour` + `emptyQuadrant` + `hasOutline`
+  to drop a quarter that is bare surface, and `onQuad` in `openCapture` queueing the four in reading order. The old
+  file-input path stays as the fallback when there is no camera scanner, and now tolerates fewer than four sleeves.
+  Review, placeholders and "Dodaj wszystkie" unchanged. `sw.js` cache `winyle-v9` -> `winyle-v10`.
+  Verified here: script parses; 15/15 synthetic squares of four under Node score every quarter correctly (artwork /
+  plain black / plain white sleeves, a last row of two, one record alone, sleeves abutting with only seams visible,
+  sleeves the colour of the table, unprinted white sleeves on a cream table, bare surface), and a grain sweep shows
+  the failure direction is the safe one - heavy grain leaves empty quarters in the review list, it never drops a
+  record. The remaining blind spot was measured rather than guessed: a flat sleeve with no edge or shadow within ~8
+  levels a channel of the surface colour reads as bare surface. `cropFromVideo` crop maths checked analytically. Codex reviewed the diff read-only three times: it found
+  the "Gotowe" press racing an in-flight split and the camera fallback only testing for the API's presence (both
+  fixed - `#scanDone` awaits the capture, `onCamFail` routes a dead camera to `doQuad`), and pushed the empty-quarter
+  test off the quarter's own edge onto the whole shot's rim. The camera itself still needs the phone - see Pending
 - Done 2026-09-27: checked after the Google Cloud clean-up: site 200, Worker `/api/db` and `/api/claude` answer,
   `/api/discogs` still 404 (not added), collection synced 2026-09-13 (5 albums). Nothing depended on Google Cloud

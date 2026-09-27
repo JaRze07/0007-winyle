@@ -176,6 +176,10 @@
   .scanseg button{border:none;background:transparent;color:#ddd;font-family:var(--body);font-size:14px;font-weight:600;padding:8px 16px;border-radius:999px;cursor:pointer}
   .scanseg button.on{background:var(--amber);color:#231903}
   .cguide{position:relative;z-index:2;width:74%;max-width:340px;aspect-ratio:1;border:3px solid var(--amber);border-radius:14px;box-shadow:0 0 0 2000px rgba(0,0,0,.5)}
+  .cguide.quad{width:92%;max-width:520px}
+  .qgrid{position:absolute;inset:0;pointer-events:none}
+  .qgrid .qg{position:absolute;background:var(--amber);opacity:.8}
+  .qgrid .qd{position:absolute;width:24px;height:24px;border-radius:50%;background:var(--amber);color:#231903;font-weight:800;font-size:13px;display:flex;align-items:center;justify-content:center}
   .shut{position:absolute;bottom:calc(150px + env(safe-area-inset-bottom));z-index:5;width:70px;height:70px;border-radius:50%;background:#fff;border:5px solid rgba(255,255,255,.45);cursor:pointer}
   .shut:active{transform:scale(.93)}
   /* --- review list --- */
@@ -727,22 +731,35 @@ function makePool(n){
   return { run(fn){ return new Promise((res,rej)=>{ q.push({fn,res,rej}); next(); }); } };
 }
 
+/* Live scanning needs both the camera and the platform barcode reader; without
+   them the batch overlay can't run and the callers fall back to a file input. */
+function canLiveScan(){
+  return ('BarcodeDetector' in window)&&!!(navigator.mediaDevices&&navigator.mediaDevices.getUserMedia);
+}
 /* ===== camera =====
-   One overlay, two jobs. In single mode it behaves exactly as before: find a
+   One overlay, three jobs. In single mode it behaves exactly as before: find a
    barcode, close, hand it back. In batch mode the camera stays live — every
-   code it reads and every sleeve you shoot is passed straight out and you carry
-   straight on to the next record. Nothing is ever looked up while you wait. */
+   code it reads, every sleeve you shoot and every square of four you shoot is
+   passed straight out and you carry straight on to the next record. Nothing is
+   ever looked up while you wait. */
 function openScanner(opt){
   opt=opt||{};
   const batch=!!opt.batch;
   const hasDet=('BarcodeDetector' in window);
-  let stream=null,raf=null,running=true,mode='code',lastCode='',lastAt=0,busy=false;
+  let stream=null,raf=null,running=true,mode=(batch&&opt.startMode)||'code',lastCode='',lastAt=0,busy=false;
+  let capturing=null;      // the shutter's work, so closing can't cut it off
   const ov=el(`<div class="scanov">
     <video id="scanvid" autoplay muted playsinline></video>
     ${batch?`<div class="bcount" id="bcount">0</div>
-    <div class="scanseg" id="scanseg"><button class="on" data-m="code">Kod kreskowy</button><button data-m="cover">Okładka</button></div>`:''}
+    <div class="scanseg" id="scanseg"><button data-m="code">Kod kreskowy</button><button data-m="cover">Okładka</button><button data-m="quad">Czwórka</button></div>`:''}
     <div class="scanframe" id="reticle"></div>
-    ${batch?'<div class="cguide" id="cguide" style="display:none"></div>':''}
+    ${batch?`<div class="cguide" id="cguide" style="display:none">
+      <div class="qgrid" id="qgrid" style="display:none">
+        <div class="qg" style="left:0;right:0;top:50%;height:2px;margin-top:-1px"></div>
+        <div class="qg" style="top:0;bottom:0;left:50%;width:2px;margin-left:-1px"></div>
+        <div class="qd" style="left:7px;top:7px">1</div><div class="qd" style="right:7px;top:7px">2</div>
+        <div class="qd" style="left:7px;bottom:7px">3</div><div class="qd" style="right:7px;bottom:7px">4</div>
+      </div></div>`:''}
     <div class="scanmsg" id="scanmsg">${batch?'Skanuj kod po kodzie — nie musisz czekać':'Nakieruj aparat na kod kreskowy'}</div>
     ${batch?'<div class="bstrip" id="bstrip"></div>':''}
     <div class="scanbtns">
@@ -790,29 +807,66 @@ function openScanner(opt){
   const closeBtn=ov.querySelector('#scanClose');
   if(closeBtn) closeBtn.onclick=()=>{ cleanup(); opt.onCancel&&opt.onCancel(); };
   const doneBtn=ov.querySelector('#scanDone');
-  if(doneBtn) doneBtn.onclick=()=>{ cleanup(); opt.onDone&&opt.onDone(); };
+  if(doneBtn) doneBtn.onclick=async()=>{
+    doneBtn.disabled=true;
+    if(capturing) await capturing;   // a square mid-split still belongs in the list
+    cleanup(); opt.onDone&&opt.onDone();
+  };
 
+  const MODEMSG={code:'Skanuj kod po kodzie — nie musisz czekać',
+                 cover:'Ustaw okładkę w ramce i naciśnij spust',
+                 quad:'Ułóż cztery okładki w kwadrat i naciśnij spust'};
+  const applyMode=m=>{
+    mode=m;
+    ov.querySelectorAll('#scanseg button').forEach(x=>x.classList.toggle('on',x.dataset.m===m));
+    ov.querySelector('#reticle').style.display=m==='code'?'block':'none';
+    ov.querySelector('#cguide').style.display=m==='code'?'none':'block';
+    ov.querySelector('#qgrid').style.display=m==='quad'?'block':'none';
+    ov.querySelector('#cguide').classList.toggle('quad',m==='quad');
+    ov.querySelector('#shutter').style.display=m==='code'?'none':'block';
+    msg(MODEMSG[m]);
+  };
   if(batch){
-    ov.querySelectorAll('#scanseg button').forEach(b=>b.onclick=()=>{
-      mode=b.dataset.m;
-      ov.querySelectorAll('#scanseg button').forEach(x=>x.classList.toggle('on',x===b));
-      ov.querySelector('#reticle').style.display=mode==='code'?'block':'none';
-      ov.querySelector('#cguide').style.display=mode==='cover'?'block':'none';
-      ov.querySelector('#shutter').style.display=mode==='cover'?'block':'none';
-      msg(mode==='code'?'Skanuj kod po kodzie — nie musisz czekać':'Ustaw okładkę w ramce i naciśnij spust');
-    });
-    ov.querySelector('#shutter').onclick=async()=>{
+    ov.querySelectorAll('#scanseg button').forEach(b=>b.onclick=()=>applyMode(b.dataset.m));
+    ov.querySelector('#shutter').onclick=()=>{
       const v=ov.querySelector('#scanvid');
       if(!v.videoWidth||busy) return;
       busy=true; flash(); blip(true);
       const g=ov.querySelector('#cguide').getBoundingClientRect();
-      const url=cropFromVideo(v,g);
-      busy=false;
-      if(url){ opt.onPhoto&&opt.onPhoto(url); refresh(); }
+      const quad=(mode==='quad');
+      capturing=(async()=>{
+        try{
+          if(quad){
+            // the whole guide at once instead of the usual 600: cropFromVideo
+            // never upscales, so this takes every sensor pixel the guide covers
+            // — around 900-1200 on a phone, i.e. ~450-600 per sleeve, the same
+            // ballpark a single cover shot gets
+            const url=cropFromVideo(v,g,1200);
+            const parts=url?(await quadrants(url)).filter(Boolean):[];
+            if(parts.length){
+              opt.onQuad&&opt.onQuad(parts);
+              msg('✓ '+parts.length+(parts.length===1?' okładka':' okładki'));
+            } else msg('Nic nie widzę w ramce — ułóż okładki i spróbuj jeszcze raz');
+            // you stay in the camera: lay out the next four and shoot again
+            setTimeout(()=>{ if(running&&mode==='quad') msg(MODEMSG.quad); },1500);
+          } else {
+            const url=cropFromVideo(v,g);
+            if(url) opt.onPhoto&&opt.onPhoto(url);
+          }
+          refresh();
+        } finally { busy=false; capturing=null; }
+      })();
     };
+    applyMode(mode);
   }
 
-  if(!hasDet){ msg('Skaner kamery niedostępny tutaj — wpisz kod ręcznie'); return {close:cleanup,refresh}; }
+  /* Deferred so the caller's `scanner=openScanner(...)` assignment has already
+     happened by the time the fallback runs and clears it. */
+  const bail=()=>{ setTimeout(()=>{ if(running){ cleanup(); opt.onCamFail(); } },0); return {close:cleanup,refresh}; };
+  if(!hasDet){
+    if(opt.onCamFail) return bail();
+    msg('Skaner kamery niedostępny tutaj — wpisz kod ręcznie'); return {close:cleanup,refresh};
+  }
   (async()=>{
     try{
       stream=await navigator.mediaDevices.getUserMedia({video:{
@@ -864,7 +918,13 @@ function openScanner(opt){
         }catch(e){}
         raf=requestAnimationFrame(tick); };
       tick();
-    }catch(e){ msg('Brak dostępu do kamery — wpisz kod ręcznie'); }
+    }catch(e){
+      // opening the camera can still fail after you have pressed "Gotowe" —
+      // don't throw a file picker at someone who already left
+      if(!running) return;
+      if(opt.onCamFail){ cleanup(); opt.onCamFail(); return; }
+      msg('Brak dostępu do kamery — wpisz kod ręcznie');
+    }
   })();
   return {close:cleanup,refresh};
 }
@@ -1170,6 +1230,7 @@ function openCapture(crate){
         <button class="btn" id="goBatch" style="font-size:16px;padding:16px">⚡  Pakowanie seryjne</button>
         <div class="srcline" style="margin-top:-6px">skanuj jedną po drugiej — rozpoznawanie leci w tle</div>
         <button class="btn ghost" id="goQuad" style="font-size:16px;padding:16px">▦  Cztery na raz (kwadrat)</button>
+        <div class="srcline" style="margin-top:-6px">kwadrat po kwadracie — aparat zostaje otwarty</div>
         <button class="btn ghost" id="goScan" style="font-size:16px;padding:16px">📷  Pojedynczy kod kreskowy</button>
         <button class="btn ghost" id="goPhoto" style="font-size:16px;padding:16px">📸  Zrób zdjęcie okładki</button>
         <button class="btn ghost" id="goManual" style="font-size:16px;padding:16px">✏️  Wpisz ręcznie</button>
@@ -1177,7 +1238,7 @@ function openCapture(crate){
       ${queue.length?`<button class="btn ghost" id="goQueue" style="width:100%;margin-top:4px;border-color:var(--amber);color:var(--amber)">↩ Wróć do listy (${queue.length})</button>`:''}
       <select class="sel" id="crateSel" style="margin-top:10px">${state.crates.map(c=>'<option value="'+c.id+'"'+(c.id===crate.id?' selected':'')+'>'+esc(c.name)+'</option>').join('')}</select>`;
     content().querySelector('#goBatch').onclick=()=>startBatch();
-    content().querySelector('#goQuad').onclick=()=>doQuad();
+    content().querySelector('#goQuad').onclick=()=>canLiveScan()?startBatch('quad'):doQuad();
     content().querySelector('#goScan').onclick=()=>doBarcode();
     content().querySelector('#goPhoto').onclick=()=>doPhoto();
     content().querySelector('#goManual').onclick=()=>showManual();
@@ -1192,6 +1253,10 @@ function openCapture(crate){
      and an item that couldn't be identified keeps its place in the queue as a
      placeholder you can re-scan or fill in by hand. */
   const queue=[];
+  /* Three at a time. The Claude proxy is the slow step — one call per sleeve —
+     and a square of four lands four photo lookups at once, so the queue is
+     always the thing waiting, never the camera. Worth re-measuring on the phone
+     before raising it: past three the proxy, not the pool, is the limit. */
   const pool=makePool(3);
   let scanner=null;
 
@@ -1225,24 +1290,45 @@ function openCapture(crate){
     return {artist:c.artist||'',title:c.title||'',year:c.year||'',genre:c.genre||'',cover:c.coverBig||c.cover||''};
   }
 
-  /* ---- serial scanning: the camera stays open ---- */
-  function startBatch(){
+  /* ---- serial scanning: the camera stays open ----
+     `startMode` decides which of the three ways in you land on; you can switch
+     between them without leaving the camera. A square of four drops all four
+     sleeves into the queue in reading order and leaves you in the viewfinder,
+     so you lay out the next four and shoot again. */
+  function startBatch(startMode){
     content().innerHTML=`<div class="spin"><div class="ring"></div>Otwieranie aparatu…</div>`;
     scanner=openScanner({
-      batch:true,
+      batch:true, startMode:startMode||'code',
       items:()=>queue,
       onCode:code=>{
         const dup=queue.find(q=>q.kind==='barcode'&&q.code===code);
         enqueue({kind:'barcode',code,dup:!!dup});
       },
       onPhoto:url=>enqueue({kind:'photo',photo:url}),
+      onQuad:parts=>parts.forEach(p=>enqueue({kind:'photo',photo:p,quad:true})),
+      onCamFail:startMode==='quad'?()=>{ scanner=null; quadFallback(); }:null,
       onDone:()=>{ scanner=null; showReview(); },
       onCancel:()=>{ scanner=null; showReview(); }
     });
   }
 
-  /* ---- four sleeves in one photo ---- */
+  /* The live camera didn't open — no permission, or no camera. One photo of four
+     sleeves still works, but it has to be started by a tap: a file picker opened
+     straight from this callback has no user gesture behind it and the browser is
+     entitled to refuse, which would leave the sheet on its spinner for good. */
+  function quadFallback(){
+    content().innerHTML=`
+      <div class="srcline">Nie udało się włączyć podglądu z kamery. Możesz zrobić jedno zdjęcie czterech okładek
+      aparatem telefonu — podział na cztery działa tak samo.</div>
+      <button class="btn" id="quadFile" style="width:100%;margin-top:12px;font-size:16px;padding:16px">📸  Zrób zdjęcie czwórki</button>
+      <div style="text-align:center;margin-top:10px"><a href="#" id="quadFBack" style="color:var(--amber);font-size:14px">← Inne metody</a></div>`;
+    content().querySelector('#quadFile').onclick=()=>doQuad();
+    content().querySelector('#quadFBack').onclick=e=>{e.preventDefault();showMethods();};
+  }
+
+  /* ---- four sleeves in one photo: the fallback when there is no live camera ---- */
   function doQuad(){
+    const QLBL=['lewa góra','prawa góra','lewy dół','prawy dół'];
     const inp=document.createElement('input');
     inp.type='file';inp.accept='image/*';inp.capture='environment';
     inp.onchange=async()=>{
@@ -1250,8 +1336,9 @@ function openCapture(crate){
       content().innerHTML=`<div class="spin"><div class="ring"></div>Dzielę zdjęcie na cztery…</div>`;
       const raw=await new Promise(res=>{ const r=new FileReader(); r.onload=()=>res(r.result); r.onerror=()=>res(null); r.readAsDataURL(f); });
       if(!raw){ content().innerHTML='<div class="spin">Błąd zdjęcia</div>'; setTimeout(showMethods,1200); return; }
-      const parts=(await quadrants(raw)).filter(Boolean);
-      if(parts.length<4){ content().innerHTML='<div class="spin">Nie udało się podzielić zdjęcia</div>'; setTimeout(showMethods,1400); return; }
+      const quarters=await quadrants(raw);
+      const parts=quarters.filter(Boolean);
+      if(!parts.length){ content().innerHTML='<div class="spin">Nie udało się podzielić zdjęcia</div>'; setTimeout(showMethods,1400); return; }
       content().innerHTML=`
         <div class="quad">
           <img src="${raw}" alt="">
@@ -1262,13 +1349,13 @@ function openCapture(crate){
           <div class="qn" style="left:8px;bottom:8px">3</div>
           <div class="qn" style="right:8px;bottom:8px">4</div>
         </div>
-        <div class="cands">${parts.map((p,i)=>`<div class="cand"><img src="${p}" alt=""><div class="cn">${i+1}. ${['lewa góra','prawa góra','lewy dół','prawy dół'][i]}</div></div>`).join('')}</div>
-        <div class="srcline">Kolejność: lewa góra → prawa góra → lewy dół → prawy dół</div>
-        <button class="btn" id="quadOk" style="width:100%;margin-top:6px">Dodaj tę czwórkę do listy</button>
+        <div class="cands">${quarters.map((p,i)=>p?`<div class="cand"><img src="${p}" alt=""><div class="cn">${i+1}. ${QLBL[i]}</div></div>`:'').join('')}</div>
+        <div class="srcline">Kolejność: lewa góra → prawa góra → lewy dół → prawy dół${parts.length<4?' · puste pola pominięte':''}</div>
+        <button class="btn" id="quadOk" style="width:100%;margin-top:6px">Dodaj ${parts.length===4?'tę czwórkę':'te okładki ('+parts.length+')'} do listy</button>
         <button class="btn ghost" id="quadRetry" style="width:100%;margin-top:8px">📸 Zrób jeszcze raz</button>
         <div style="text-align:center;margin-top:10px"><a href="#" id="quadBack" style="color:var(--amber);font-size:14px">← Wróć</a></div>`;
       content().querySelector('#quadOk').onclick=()=>{
-        parts.forEach(p=>enqueue({kind:'photo',photo:p}));
+        parts.forEach(p=>enqueue({kind:'photo',photo:p,quad:true}));
         blip(true);
         showReview();
       };
@@ -1732,8 +1819,10 @@ function resizeSquare(drawable,max){
 }
 /* Cut the square guide out of the live viewfinder. The video is drawn with
    object-fit:cover, so the on-screen box has to be mapped back through that
-   scale before it means anything in video pixels. */
-function cropFromVideo(v,rect){
+   scale before it means anything in video pixels. `max` caps the output side and
+   never upscales past what the guide actually covers: 600 for a single sleeve,
+   1200 for a square of four, which on a phone lands ~450-600 per quarter. */
+function cropFromVideo(v,rect,max){
   try{
     const box=v.getBoundingClientRect();
     const vw=v.videoWidth,vh=v.videoHeight;
@@ -1744,26 +1833,112 @@ function cropFromVideo(v,rect){
     const sx=Math.max(0,Math.round((rect.left-box.left+offX)/s));
     const sy=Math.max(0,Math.round((rect.top-box.top+offY)/s));
     const cv=document.createElement('canvas');
-    const out=Math.min(600,side);
+    const out=Math.min(max||600,side);
     cv.width=cv.height=out;
     cv.getContext('2d').drawImage(v,sx,sy,side,side,0,0,out,out);
     return cv.toDataURL('image/jpeg',0.82);
   }catch(e){ return null; }
 }
 /* Four sleeves laid out in a square, photographed in one shot. Reading order:
-   top-left, top-right, bottom-left, bottom-right. */
+   top-left, top-right, bottom-left, bottom-right. A quarter with nothing in it
+   comes back as null — the caller filters those out — so the last square of a
+   box can hold two records without inventing two junk items. */
 async function quadrants(src){
   const im=await loadImg(src);
   if(!im) return [];
   const hw=Math.floor(im.width/2),hh=Math.floor(im.height/2);
+  const bg=surfaceColour(im);      // what the records are lying on
   const out=[];
   for(const [x,y] of [[0,0],[hw,0],[0,hh],[hw,hh]]){
     const cv=document.createElement('canvas');
     cv.width=hw; cv.height=hh;
-    cv.getContext('2d').drawImage(im,x,y,hw,hh,0,0,hw,hh);
-    out.push(trimSquare(cv,600));
+    cv.getContext('2d',{willReadFrequently:true}).drawImage(im,x,y,hw,hh,0,0,hw,hh);
+    out.push(emptyQuadrant(cv,bg)?null:trimSquare(cv,600));
   }
   return out;
+}
+/* The colour of whatever the four sleeves are lying on, read off the outer rim
+   of the whole shot — the records go inside the frame, so the rim is table. The
+   median, not the average, so a sleeve pushed right up against one edge doesn't
+   drag it. Cheap: the rim is sampled from a 160 px copy, not the full photo. */
+function surfaceColour(im){
+  try{
+    const N=160,R=2;
+    const cv=document.createElement('canvas'); cv.width=cv.height=N;
+    const ctx=cv.getContext('2d',{willReadFrequently:true});
+    ctx.drawImage(im,0,0,N,N);
+    const d=ctx.getImageData(0,0,N,N).data;
+    const ch=[[],[],[]];
+    const take=(x,y)=>{const i=(y*N+x)*4;ch[0].push(d[i]);ch[1].push(d[i+1]);ch[2].push(d[i+2]);};
+    for(let k=0;k<R;k++){
+      for(let x=0;x<N;x++){ take(x,k); take(x,N-1-k); }
+      for(let y=0;y<N;y++){ take(k,y); take(N-1-k,y); }
+    }
+    if(!ch[0].length) return null;
+    return ch.map(a=>{ a.sort((p,q)=>p-q); return a[a.length>>1]; });
+  }catch(e){ return null; }
+}
+/* Is this quarter just the table? Two independent things have to agree, one
+   about colour and one about shape:
+     (a) almost none of it differs from `bg`, the surface colour read off the rim
+         of the whole shot, by the colour threshold trimSquare also uses. Taking
+         the surface from the whole shot and not from the quarter's own edge is
+         what keeps a plain single-colour sleeve that fills its quarter edge to
+         edge — its own edge would have made it its own background.
+     (b) nothing in it has an outline. A record lying on a surface always brings
+         one, its own edge or the shadow it casts, and that is the only thing
+         left to go on when a plain unprinted sleeve happens to be the colour of
+         the table underneath it.
+   Both bars sit where only bare surface passes, because the two mistakes don't
+   cost the same: an empty square left in the review list costs one tap, a
+   dropped record is lost silently along with its slot. With no `bg` to compare
+   against, nothing is dropped.
+   The one case this cannot see: a sleeve with no printing at all, within about
+   8 levels a channel of the colour of the surface, lit so flatly that it shows
+   neither its own edge nor a shadow. Anything below the outline step is invisible
+   to both tests at once, and the step can't go lower without grain tripping it. */
+function emptyQuadrant(cv,bg){
+  try{
+    if(!bg) return false;
+    const w=cv.width,h=cv.height;
+    const d=cv.getContext('2d',{willReadFrequently:true}).getImageData(0,0,w,h).data;
+    const sx=Math.max(1,Math.floor(w/40)),sy=Math.max(1,Math.floor(h/40));
+    const bgR=bg[0],bgG=bg[1],bgB=bg[2];
+    let diff=0,tot=0;
+    for(let y=0;y<h;y+=sy) for(let x=0;x<w;x+=sx){
+      const i=(y*w+x)*4; tot++;
+      if(Math.abs(d[i]-bgR)+Math.abs(d[i+1]-bgG)+Math.abs(d[i+2]-bgB)>105) diff++;
+    }
+    if(!tot||diff/tot>=0.06) return false;
+    return !hasOutline(d,w,h,sx,sy);
+  }catch(e){ return false; }
+}
+/* Local colour steps along the sampled rows and columns. Unlike a spread or a
+   percentile this still sees a feature a few pixels wide, which is the whole
+   point: a sleeve edge is thin. Two details earn their keep. The step compares
+   the average of four pixels either side of it rather than two single pixels, so
+   grain averages down while an edge keeps its full height — that is what lets the
+   threshold sit as low as 24 (summed over the channels, so ~8 levels each) and
+   the threshold is what sets the one blind spot left: a sleeve closer than that
+   to the colour of the surface, showing neither edge nor shadow, reads as bare
+   surface. And the step is summed across the three channels instead of being
+   turned into brightness, so the seam between two nearly black sleeves — where
+   there is no room left to get darker — counts like one between two white ones.
+   Heavier grain than a well-lit shot has only makes quarters look occupied, and
+   an empty quarter kept is the harmless way to be wrong. */
+function hasOutline(d,w,h,sx,sy){
+  const R=4;      // pixels averaged either side of the step
+  const acc=(i,st)=>{ let r=0,g=0,b=0; for(let k=0;k<R;k++){const j=i+k*st;r+=d[j];g+=d[j+1];b+=d[j+2];} return [r,g,b]; };
+  const jump=(a,b,st)=>{ const p=acc(a,st),q=acc(b,st);
+    return Math.abs(p[0]-q[0])+Math.abs(p[1]-q[1])+Math.abs(p[2]-q[2])>R*24; };
+  let hits=0,tot=0;
+  for(let y=0;y<h;y+=sy) for(let x=R;x+R<=w;x+=R){
+    tot++; if(jump((y*w+x)*4,(y*w+x-R)*4,4)) hits++;
+  }
+  for(let x=0;x<w;x+=sx) for(let y=R;y+R<=h;y+=R){
+    tot++; if(jump((y*w+x)*4,((y-R)*w+x)*4,w*4)) hits++;
+  }
+  return tot>0&&hits/tot>0.004;
 }
 function downscale(file){
   return new Promise(res=>{
