@@ -146,3 +146,9 @@ Claude Code is the only writer; Codex is read-only via `../tools/codex-ro.ps1`/`
 core toolkits only, no third-party plugins or MCP servers; secrets never in the repo or prompts.
 **Every time this project changes**, update `STATUS.md` (Pending + Specification) and run
 `python ..	ools\docsync.py 0007-winyle --force` so the Google Doc tab is current.
+
+**Browser setup (2026-09-28):** anything behind a web console (AdMob, Play Console, OAuth clients, Hetzner,
+Cloudflare, store listings) is done through the **Claude browser extension**: the terminal writes a paste-ready
+brief (steps, exact URLs with `authuser=2` for Google, names, values, what to report), Jacek runs it and pastes the
+report back. The extension never types secrets and never edits sign-in settings; those steps go in a separate
+minimal list for Jacek. Full text in `../tools/CLAUDE-project-template.md`.
