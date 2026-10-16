@@ -39,7 +39,19 @@ jobs:
           distribution: temurin
           java-version: 17
 
-      - uses: android-actions/setup-android@v3
+      # The runner image already carries an Android SDK. The setup-android action
+      # is not used: it asks sdkmanager for the long-obsolete `tools` package and
+      # fails on current images.
+      - name: Use the runner's Android SDK
+        run: |
+          SDK=/usr/local/lib/android/sdk
+          test -d "$SDK" || { echo "::error::no Android SDK on this runner"; exit 1; }
+          echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK" >> "$GITHUB_ENV"
+          SDKMGR="$(ls -d "$SDK"/cmdline-tools/*/bin/sdkmanager | sort -V | tail -1)"
+          yes | "$SDKMGR" --licenses >/dev/null 2>&1 || true
+          "$SDKMGR" "platforms;android-35" "build-tools;35.0.0" > /tmp/sdk.log 2>&1 || { tail -20 /tmp/sdk.log; exit 1; }
+          echo "build-tools present:"; ls "$SDK"/build-tools
 
       # Gradle is pinned here rather than taken from the runner image: the Android
       # plugin only supports a window of Gradle versions, and the image's version
