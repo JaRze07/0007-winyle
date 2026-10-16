@@ -411,7 +411,11 @@ async function getCover(id){
   const v=await idbCover('get','c:'+id);
   if(v){ coverCache.set(id,v); return v; }
   const old=await sget('winyle-cover-'+id);         // written by an older build
-  if(old){ coverCache.set(id,old); idbCover('put','c:'+id,old); }
+  if(old){
+    coverCache.set(id,old);
+    // move it across and give the quota back, which is the point of the move
+    idbCover('put','c:'+id,old).then(ok=>{ if(ok){ try{ localStorage.removeItem('winyle-cover-'+id); }catch(e){} } });
+  }
   return old;
 }
 /* A small version of the cover for the cloud copy, cached because a push walks
@@ -2405,6 +2409,16 @@ function openImport(){
 
   /* ---------- 4. review: boxes, slots, what was recognised ---------- */
   function cases(){ return groupIntoCases(items); }
+  /* Keep a typed box name when the photo it is keyed to stops being that box's
+     first - it is handed to whichever photo takes over. */
+  function rekeyCaseName(it){
+    if(!caseNames.has(it.id)) return;
+    const run=cases().find(c=>c.indexOf(it)>=0);
+    const heir=run&&run.find(p=>p!==it);
+    const name=caseNames.get(it.id);
+    caseNames.delete(it.id);
+    if(heir) caseNames.set(heir.id,name);
+  }
   function stat(){
     const recs=items.filter(it=>!it.sep);
     return {recs:recs.length, seps:items.length-recs.length, cs:cases().length,
@@ -2529,12 +2543,18 @@ function openImport(){
       <button class="btn ghost" id="impMakeSep" style="width:100%;margin-top:10px;font-size:13px">To przekładka — podziel tutaj skrzynkę</button>
       <button class="btn ghost" id="impDrop" style="width:100%;margin-top:8px;font-size:13px;border-color:var(--oxblood);color:var(--oxblood)">Wyrzuć to zdjęcie z importu</button>
       <div style="text-align:center;margin-top:12px"><a href="#" id="impBack" style="color:var(--amber);font-size:14px">← Wróć do listy</a></div>`;
+    /* The fields were filled from whatever was known when this screen opened. A
+       lookup can finish while you are looking at it, so going back compares the
+       inputs against that snapshot and does nothing unless you actually typed:
+       otherwise simply opening a record and leaving would wipe the result that
+       arrived in the meantime. */
+    const shown={artist:d.artist||'',title:d.title||'',year:d.year||'',genre:d.genre||''};
     const grab=()=>{
       const g=id=>(body().querySelector(id)||{}).value||'';
       const v={artist:g('#impArtist').trim(),title:g('#impTitle').trim(),year:g('#impYear').trim(),genre:g('#impGenre').trim()};
-      const was=JSON.stringify(it.data||{});
-      if(v.artist||v.title){ it.data=v; it.status='ok'; } else { it.data=null; if(it.status==='ok') it.status='none'; }
-      if(JSON.stringify(it.data||{})!==was) it.edited=true;   // yours now - a late lookup must not undo it
+      if(JSON.stringify(v)===JSON.stringify(shown)) return;    // untouched
+      if(v.artist||v.title){ it.data=v; it.status='ok'; } else { it.data=null; it.status='none'; }
+      it.edited=true;                                          // yours now - a late lookup must not undo it
     };
     body().querySelectorAll('[data-alt]').forEach(n=>n.onclick=()=>{
       /* You picked the sleeve that matches your photo, so this counts as
@@ -2544,8 +2564,8 @@ function openImport(){
       it.status='ok'; it.edited=true;
       showDetail(it);
     });
-    body().querySelector('#impMakeSep').onclick=()=>{ grab(); it.sep=true; it.edited=true; showReview(); };
-    body().querySelector('#impDrop').onclick=()=>{ items=items.filter(x=>x!==it); showReview(); };
+    body().querySelector('#impMakeSep').onclick=()=>{ grab(); rekeyCaseName(it); it.sep=true; it.edited=true; showReview(); };
+    body().querySelector('#impDrop').onclick=()=>{ rekeyCaseName(it); items=items.filter(x=>x!==it); showReview(); };
     body().querySelector('#impBack').onclick=e=>{ e.preventDefault(); grab(); showReview(); };
   }
 

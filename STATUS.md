@@ -75,7 +75,19 @@ Full description and setup: `README.md` in this repo.
     pełnoklatkowa) - 11/11, z flat-blue świadomie zachowanym jako płyta; cały przebieg importu w jsdom na plikach
     z prawdziwym EXIF (nazwy malejące przeciw czasom) - 25/25, w tym że w chmurze/kolekcji **nie ląduje żaden
     URL grafiki z bazy**, że każda płyta dostaje swoje własne zdjęcie i że miejsce 1 to ostatnie zrobione zdjęcie.
-  - Nie sprawdzone tutaj: build APK (brak Javy - idzie przez Actions) i sam aparat.
+  - Codex przejrzał diff trzy razy (read-only) i znalazł siedem prawdziwych błędów, wszystkie naprawione:
+    miniatura z chmury nadpisywała lokalny oryginał okładki, zapis do IndexedDB raportował sukces przed
+    commitem transakcji, spóźniony wynik rozpoznawania kasował ręczną poprawkę, subsekundy EXIF porównywane
+    bez dopełnienia („9" to .900 s, nie 9 ms), samo otwarcie i zamknięcie karty płyty gubiło wynik, który
+    przyszedł w trakcie, migracja okładek nie zwalniała miejsca w `localStorage`, a nazwa skrzynki wracała
+    do domyślnej po usunięciu pierwszego zdjęcia. Jeden zarzut odrzucony: ręczny wybór okładki *jest*
+    potwierdzeniem, więc może ustawić `ok`.
+  - APK: workflow przeszedł (run 38976823515), `winyle.apk` 449 kB wisi w Release **v1.1**. Sprawdzone na
+    pobranym pliku: podpisany, odcisk zgodny z `assetlinks.json` (8C:E7:02:…), w zasobach jest żywy adres
+    `/0007-winyle/` i nie ma starego `/winyle/`; `assetlinks.json` z nowym odciskiem jest już na Pages.
+    `android-actions/setup-android@v3` nie działa (żąda nieistniejącego pakietu `tools`) — build używa SDK
+    z obrazu runnera i przypiętego Gradle 8.9.
+  - Nie sprawdzone tutaj: sam aparat i instalacja APK na telefonie.
 - Done 2026-09-27: **continuous four-at-a-time scanning.** `openScanner` gained a third segment (`quad`) and a
   `startMode`, so "Cztery na raz" is no longer one-shot: the camera stays open and you shoot square after square.
   New: the 2x2 guide overlay with numbered corners (`.cguide.quad` is wider than the single-sleeve guide - easier

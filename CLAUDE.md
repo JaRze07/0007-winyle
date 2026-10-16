@@ -189,8 +189,12 @@ No test framework. What has actually been verified, and how:
   last photo taken, flipping reverses it, a typed box name survives a re-render,
   the ambiguous and unrecognised photos both become placeholders keeping their
   slots, every record ends up with **its own** photograph as its cover, and **no
-  database artwork URL reaches the collection**. `tools/` for the harness is not
-  kept; it is reproducible from this description.
+  database artwork URL reaches the collection**. A second jsdom pass covers the
+  review screen's two races: opening a still-pending record and leaving it must
+  not discard a result that landed while it was open (the detail screen diffs the
+  inputs against what it rendered, so only real typing counts as an edit), and a
+  typed box name survives dropping the photo it was keyed to. The harness is not
+  kept in the repo; it is reproducible from this description.
 - Not verified here: the APK build (no Java in the container — it runs in Actions)
   and the camera.
 - Camera paths (live scanning, the cover shutter, the `quad` shutter) can only be
