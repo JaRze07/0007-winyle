@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The collection lives in the web layer's own storage and in the cloud, so
+     there is nothing in the shell worth backing up. -->
+<full-backup-content>
+  <exclude domain="sharedpref" path="."/>
+</full-backup-content>

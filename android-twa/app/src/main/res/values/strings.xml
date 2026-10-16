@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <string name="app_name">Winyle</string>
+  <string name="launcher_name">Winyle</string>
+  <!-- The live site. The installed app always shows whatever is deployed here,
+       so pushing to main updates every phone with no new APK. -->
+  <string name="twa_url">https://jarze07.github.io/0007-winyle/</string>
+  <string name="asset_statements">
+    [{ \"relation\": [\"delegate_permission/common.handle_all_urls\"],
+       \"target\": { \"namespace\": \"web\", \"site\": \"https://jarze07.github.io\" } }]
+  </string>
+</resources>

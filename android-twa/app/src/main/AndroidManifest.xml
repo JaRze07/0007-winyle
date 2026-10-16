@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+  <!-- A Trusted Web Activity: a thin shell around the live site. There is no
+       copy of the app inside the APK, so whatever is deployed to GitHub Pages is
+       what the phone runs - a push is the update. The APK itself only needs
+       rebuilding if the name, icon, colours or target URL change.
+
+       The site proves it owns this app through .well-known/assetlinks.json,
+       which carries the signing certificate's SHA-256. Signed with a different
+       key and the verification fails: the app still works, but it opens with a
+       browser address bar across the top instead of looking native. -->
+
+  <uses-permission android:name="android.permission.INTERNET"/>
+  <!-- the camera is reached through the web layer (getUserMedia), which asks for
+       its own permission; declaring it here keeps the Play listing honest -->
+  <uses-feature android:name="android.hardware.camera" android:required="false"/>
+
+  <application
+      android:label="@string/app_name"
+      android:icon="@mipmap/ic_launcher"
+      android:roundIcon="@mipmap/ic_launcher_round"
+      android:allowBackup="true"
+      android:fullBackupContent="@xml/backup_rules"
+      android:supportsRtl="true"
+      android:theme="@style/Theme.App">
+
+    <meta-data
+        android:name="asset_statements"
+        android:value="@string/asset_statements"/>
+
+    <activity
+        android:name="com.google.androidbrowserhelper.trusted.LauncherActivity"
+        android:exported="true"
+        android:label="@string/launcher_name"
+        android:theme="@style/Theme.App.Splash">
+
+      <meta-data
+          android:name="android.support.customtabs.trusted.DEFAULT_URL"
+          android:value="@string/twa_url"/>
+      <meta-data
+          android:name="android.support.customtabs.trusted.STATUS_BAR_COLOR"
+          android:resource="@color/colorPrimary"/>
+      <meta-data
+          android:name="android.support.customtabs.trusted.NAVIGATION_BAR_COLOR"
+          android:resource="@color/navigationColor"/>
+      <meta-data
+          android:name="android.support.customtabs.trusted.SPLASH_SCREEN_BACKGROUND_COLOR"
+          android:resource="@color/backgroundColor"/>
+
+      <intent-filter>
+        <action android:name="android.intent.action.MAIN"/>
+        <category android:name="android.intent.category.LAUNCHER"/>
+      </intent-filter>
+
+      <!-- so links to the site open in the app once assetlinks verifies -->
+      <intent-filter android:autoVerify="true">
+        <action android:name="android.intent.action.VIEW"/>
+        <category android:name="android.intent.category.DEFAULT"/>
+        <category android:name="android.intent.category.BROWSABLE"/>
+        <data android:scheme="https"
+              android:host="jarze07.github.io"
+              android:pathPrefix="/0007-winyle"/>
+      </intent-filter>
+    </activity>
+
+    <!-- keeps the web app's own notification/permission plumbing working -->
+    <activity android:name="com.google.androidbrowserhelper.trusted.FocusActivity"/>
+    <activity android:name="com.google.androidbrowserhelper.trusted.WebViewFallbackActivity"
+              android:configChanges="orientation|screenSize"/>
+    <service
+        android:name="com.google.androidbrowserhelper.trusted.DelegationService"
+        android:exported="true">
+      <intent-filter>
+        <action android:name="android.support.customtabs.trusted.TRUSTED_WEB_ACTIVITY_SERVICE"/>
+      </intent-filter>
+    </service>
+  </application>
+</manifest>

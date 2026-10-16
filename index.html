@@ -195,6 +195,36 @@
   .bacts{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
   .bacts button{font-size:12px;padding:6px 10px;border-radius:9px;background:var(--ink-3);color:var(--paper-2);border:1px solid var(--line);cursor:pointer;font-family:var(--body)}
   .bacts button.warn{border-color:var(--amber);color:var(--amber)}
+  /* --- photo import --- */
+  .imp-h{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:14px 0 6px}
+  .imp-h input{flex:1;min-width:0;background:rgba(255,255,255,.07);border:1px solid var(--line);color:var(--paper);
+    font-family:var(--body);font-size:15px;font-weight:700;padding:9px 11px;border-radius:9px}
+  .imp-h .cnt{font-size:12px;color:var(--faint);font-family:var(--mono);flex:0 0 auto}
+  .imp-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:7px}
+  .imp-tile{position:relative;aspect-ratio:1;border-radius:10px;overflow:hidden;background:var(--ink);
+    cursor:pointer;border:2px solid rgba(255,255,255,.12)}
+  .imp-tile img{width:100%;height:100%;object-fit:cover;display:block}
+  .imp-tile.ok{border-color:var(--keep)}
+  .imp-tile.pending,.imp-tile.ambiguous{border-color:var(--amber)}
+  .imp-tile.none,.imp-tile.error{border-color:var(--oxblood)}
+  .imp-tile .slot{position:absolute;left:3px;top:3px;background:rgba(0,0,0,.7);color:#fff;
+    font-family:var(--mono);font-size:10px;padding:1px 5px;border-radius:6px}
+  .imp-tile .mk{position:absolute;right:3px;bottom:3px;font-size:11px;line-height:1;background:rgba(0,0,0,.7);
+    border-radius:50%;width:17px;height:17px;display:flex;align-items:center;justify-content:center}
+  .imp-tile .nm{position:absolute;left:0;right:0;bottom:0;background:linear-gradient(transparent,rgba(0,0,0,.85));
+    color:#fff;font-size:9px;line-height:1.15;padding:10px 3px 3px;max-height:50%;overflow:hidden}
+  .imp-sep{display:flex;align-items:center;gap:9px;margin:12px 0 2px;font-size:12px;color:var(--faint)}
+  .imp-sep .sw{width:26px;height:26px;border-radius:7px;border:1px solid var(--line);flex:0 0 auto}
+  .imp-sep .ln{flex:1;height:1px;background:var(--line)}
+  .imp-sep button{font-size:11px;padding:4px 8px;border-radius:7px;background:var(--ink-3);color:var(--paper-2);
+    border:1px solid var(--line);cursor:pointer;font-family:var(--body);flex:0 0 auto}
+  .imp-bar{height:6px;border-radius:3px;background:rgba(255,255,255,.12);overflow:hidden;margin:6px 0}
+  .imp-bar i{display:block;height:100%;background:var(--amber);transition:width .25s}
+  .imp-cmp{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:10px 0}
+  .imp-cmp img{width:100%;aspect-ratio:1;object-fit:cover;border-radius:11px;background:var(--ink);display:block}
+  .imp-cmp .cap{font-size:11px;color:var(--faint);text-align:center;margin-top:5px;line-height:1.3}
+  .imp-warn{background:rgba(226,166,62,.12);border:1px solid rgba(226,166,62,.45);border-radius:10px;
+    padding:9px 11px;font-size:13px;color:var(--paper-2);margin:8px 0}
   /* --- candidate picker --- */
   .cands{display:grid;grid-template-columns:repeat(3,1fr);gap:9px;margin:10px 0}
   .cand{border-radius:11px;overflow:hidden;border:2px solid transparent;background:var(--ink);cursor:pointer;text-align:center}
@@ -224,6 +254,7 @@
 /* ===== storage =====
    Online sync via Supabase when configured (CONFIG below), otherwise on-device
    localStorage. Same key/value interface either way. */
+const BUILD=11;                 // bump with sw.js CACHE - shown in Ustawienia
 const CONFIG={ SUPABASE_URL:'', SUPABASE_KEY:'', CLAUDE_PROXY:'https://winyle-api.winyle-jr.workers.dev/api/claude', WORKER_URL:'https://winyle-api.winyle-jr.workers.dev' };   // SUPABASE_*: online sync · CLAUDE_PROXY: optional smart lookup · WORKER_URL: cloud sync
 const ONLINE=()=>!!(CONFIG.SUPABASE_URL&&CONFIG.SUPABASE_KEY);
 function supaHeaders(extra){ return Object.assign({apikey:CONFIG.SUPABASE_KEY,Authorization:'Bearer '+CONFIG.SUPABASE_KEY},extra||{}); }
@@ -246,32 +277,57 @@ async function sset(k,v){
     }catch(e){}
   }
 }
-/* ===== cloud sync (GitHub via Worker) ===== */
+/* ===== cloud sync (GitHub via Worker) =====
+   The cloud copy is a single JSON file the Worker commits to `db/collection.json`
+   in the project's own GitHub repo. Two things follow from that, and both were
+   measured against the live Worker rather than assumed:
+     - The Worker serves the file back through an API that stops returning content
+       somewhere under a megabyte. Push more than that and the save still reports
+       success while every pull quietly fails — so a pull falls back to the raw
+       file on GitHub, which has no such ceiling, and a push stays inside a budget.
+     - Every push rewrites the whole file as a new commit, so whatever it carries
+       is paid for again on every single save.
+   Metadata is tiny. Artwork is what grows, so the full-size photo stays on the
+   phone and the cloud carries a small thumbnail of it. See `cloudPush`. */
+const RAW_DB='https://raw.githubusercontent.com/JaRze07/0007-winyle/main/db/collection.json';
+const SYNC_BUDGET=500*1024;            // JSON bytes of artwork, well inside what the Worker can serve
+let lastSync=null;                     // {ok,at,thumbs,skipped,reason} - shown in Settings
+function usableDB(d){ return (d&&((d.albums&&d.albums.length)||(d.crates&&d.crates.length)))?d:null; }
 async function cloudPull(){
-  if(!CONFIG.WORKER_URL) return null;
+  if(CONFIG.WORKER_URL){
+    try{
+      const r=await fetch(CONFIG.WORKER_URL+'/api/db',{cache:'no-store'});
+      if(r.ok){ const d=usableDB(await r.json()); if(d) return d; }
+    }catch(e){}
+  }
+  // the Worker couldn't serve it (too large, or down) - read the file directly
   try{
-    const r=await fetch(CONFIG.WORKER_URL+'/api/db');
-    if(!r.ok) return null;
-    const d=await r.json();
-    if(d && d.albums && d.albums.length) return d;
-    return null;
-  }catch(e){ return null; }
+    const r=await fetch(RAW_DB+'?t='+Date.now(),{cache:'no-store'});
+    if(r.ok) return usableDB(await r.json());
+  }catch(e){}
+  return null;
 }
 async function cloudPush(){
   if(!CONFIG.WORKER_URL) return false;
   try{
-    // gather all covers
-    const covers={};
-    for(const a of state.albums){
-      const c=await getCover(a.id);
-      if(c) covers[a.id]=c;
+    /* Newest first, so if the budget runs out it is the oldest boxes that go
+       without a cloud thumbnail - they are the ones already packed away. The
+       phone keeps every full-size cover either way. */
+    const covers={}; let used=0,skipped=0;
+    for(const a of [...state.albums].reverse()){
+      if(a.cover!=='local') continue;              // an API cover is already just a URL
+      const t=await syncThumb(a.id);
+      if(!t) continue;
+      if(used+t.length>SYNC_BUDGET){ skipped++; continue; }
+      covers[a.id]=t; used+=t.length;
     }
     const r=await fetch(CONFIG.WORKER_URL+'/api/db',{
       method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({crates:state.crates,albums:state.albums,covers})
     });
+    lastSync={ok:r.ok,at:Date.now(),thumbs:Object.keys(covers).length,skipped,kb:Math.round(used/1024)};
     return r.ok;
-  }catch(e){ return false; }
+  }catch(e){ lastSync={ok:false,at:Date.now(),reason:'brak połączenia'}; return false; }
 }
 
 /* ===== data ===== */
@@ -290,15 +346,92 @@ async function load(){
     const cloud=await cloudPull();
     if(cloud){
       state.crates=cloud.crates||[];state.albums=cloud.albums||[];
-      // restore covers from cloud
-      if(cloud.covers){ for(const[id,d]of Object.entries(cloud.covers)){ await saveCover(id,d); } }
+      if(cloud.covers) await restoreCovers(cloud.covers);
       await sset('winyle-meta',{crates:state.crates,albums:state.albums});
     } else { seed();await persist(); }
   }
 }
 async function persist(){ await sset('winyle-meta',{crates:state.crates,albums:state.albums}); cloudPush(); }
-async function saveCover(id,d){ coverCache.set(id,d); await sset('winyle-cover-'+id,d); }
-async function getCover(id){ if(coverCache.has(id))return coverCache.get(id); const d=await sget('winyle-cover-'+id); if(d)coverCache.set(id,d); return d; }
+
+/* ===== cover store =====
+   Artwork is the only bulky thing the app keeps, and a packed collection has
+   hundreds of sleeves in it. localStorage tops out around 5 MB and - worse -
+   throws once it is full, which the old `sset` swallowed: a big import would
+   have silently lost covers. IndexedDB has no such ceiling. Covers written by
+   an older build still live in localStorage, so they are read from there on
+   the way in and moved across the first time they are asked for. */
+let coverDBP=null;
+function coverDB(){
+  if(coverDBP) return coverDBP;
+  coverDBP=new Promise(res=>{
+    try{
+      if(!window.indexedDB) return res(null);
+      const rq=indexedDB.open('winyle',1);
+      rq.onupgradeneeded=()=>{ const db=rq.result; if(!db.objectStoreNames.contains('covers')) db.createObjectStore('covers'); };
+      rq.onsuccess=()=>res(rq.result);
+      rq.onerror=()=>res(null);
+      rq.onblocked=()=>res(null);
+      setTimeout(()=>res(null),4000);
+    }catch(e){ res(null); }
+  });
+  return coverDBP;
+}
+function idbCover(mode,key,val){
+  return coverDB().then(db=>new Promise(res=>{
+    if(!db) return res(null);
+    try{
+      const tx=db.transaction('covers',mode==='get'?'readonly':'readwrite');
+      const st=tx.objectStore('covers');
+      const rq=mode==='get'?st.get(key):st.put(val,key);
+      if(mode==='get'){ rq.onsuccess=()=>res(rq.result||null); }
+      else { tx.oncomplete=()=>res(true); }     // not rq.onsuccess - that fires before the commit
+      rq.onerror=()=>res(null);
+      tx.onabort=()=>res(null);
+      tx.onerror=()=>res(null);
+    }catch(e){ res(null); }
+  }));
+}
+async function saveCover(id,d){
+  coverCache.set(id,d);
+  thumbCache.delete(id);
+  if(await idbCover('put','c:'+id,d)) return;
+  await sset('winyle-cover-'+id,d);                 // no IndexedDB here - do what we can
+}
+/* Covers coming back from the cloud are thumbnails, so they may only ever fill a
+   gap - never overwrite the full-size photograph the device already holds. */
+async function restoreCovers(covers){
+  for(const [id,d] of Object.entries(covers||{})){
+    if(!d) continue;
+    if(await getCover(id)) continue;
+    await saveCover(id,d);
+  }
+}
+async function getCover(id){
+  if(coverCache.has(id)) return coverCache.get(id);
+  const v=await idbCover('get','c:'+id);
+  if(v){ coverCache.set(id,v); return v; }
+  const old=await sget('winyle-cover-'+id);         // written by an older build
+  if(old){ coverCache.set(id,old); idbCover('put','c:'+id,old); }
+  return old;
+}
+/* A small version of the cover for the cloud copy, cached because a push walks
+   the whole collection and re-encoding every sleeve each time would be silly. */
+/* 128 px at low quality is about 4 KB of JSON. That keeps a push small enough
+   that paying for it again on every save stays reasonable, and a second device
+   still shows a recognisable sleeve everywhere a cover appears small. The device
+   that took the photo always draws the full-size original from its own store. */
+const THUMB_PX=128,THUMB_Q=0.55;
+const thumbCache=new Map();
+async function syncThumb(id){
+  if(thumbCache.has(id)) return thumbCache.get(id);
+  const full=await getCover(id);
+  if(!full) return null;
+  let t=null;
+  try{ const im=await loadImg(full); if(im) t=resizeSquare(im,THUMB_PX,THUMB_Q); }catch(e){}
+  if(!t) t=full.length<=24*1024?full:null;          // tiny already, or give up on it
+  thumbCache.set(id,t);
+  return t;
+}
 
 function seed(){
   const c1={id:uid(),name:'Niedzielny jazz',tagColor:TAGS[1],closed:true};
@@ -984,7 +1117,8 @@ function renderCrates(){
   if(!state.crates.length){
     m.innerHTML=`<h2 class="page-h">Twoje skrzynki</h2>
       <div class="empty"><div class="ico">▥</div><div class="big">Brak skrzynek</div><div>Utwórz skrzynkę i zacznij wkładać płyty.</div></div>
-      <button class="btn" id="newCrate">+ Nowa skrzynka</button>`;
+      <button class="btn" id="newCrate">+ Nowa skrzynka</button>
+      <button class="btn ghost" id="impOpen" style="margin-top:10px">📥  Import ze zdjęć</button>`;
   } else {
     m.innerHTML=`<h2 class="page-h">Twoje skrzynki</h2>`+state.crates.map(c=>{
       const n=crateAlbums(c.id).length;
@@ -994,11 +1128,13 @@ function renderCrates(){
         <div style="flex:1;min-width:0"><h3>${esc(c.name)}</h3>
           <div class="crate-meta">${n} ${plPly(n)} · ${c.closed?'zamknięta':'w trakcie pakowania'}</div></div>
       </div>`;
-    }).join('')+`<button class="btn" id="newCrate" style="margin-top:6px">+ Nowa skrzynka</button>`;
+    }).join('')+`<button class="btn" id="newCrate" style="margin-top:6px">+ Nowa skrzynka</button>
+      <button class="btn ghost" id="impOpen" style="margin-top:10px">📥  Import ze zdjęć</button>`;
   }
   hydrateCovers(m);
   m.querySelectorAll('[data-crate]').forEach(c=>c.onclick=()=>{state.crateId=c.dataset.crate;render();});
   const nb=document.getElementById('newCrate'); if(nb)nb.onclick=openNewCrate;
+  const ib=document.getElementById('impOpen'); if(ib)ib.onclick=openImport;
 }
 
 /* crate detail */
@@ -1809,13 +1945,13 @@ function openCapture(crate){
   sheet.querySelector('.grab').onclick=()=>closeModal();
 }
 /* Plain resize — used when the crop is already known (a viewfinder guide). */
-function resizeSquare(drawable,max){
+function resizeSquare(drawable,max,q){
   const w=drawable.width||drawable.videoWidth,h=drawable.height||drawable.videoHeight;
   const side=Math.min(w,h),s=Math.min(1,(max||600)/side);
   const cv=document.createElement('canvas');
   cv.width=cv.height=Math.round(side*s);
   cv.getContext('2d').drawImage(drawable,Math.floor((w-side)/2),Math.floor((h-side)/2),side,side,0,0,cv.width,cv.height);
-  return cv.toDataURL('image/jpeg',0.82);
+  return cv.toDataURL('image/jpeg',q||0.82);
 }
 /* Cut the square guide out of the live viewfinder. The video is drawn with
    object-fit:cover, so the on-screen box has to be mapped back through that
@@ -1940,6 +2076,164 @@ function hasOutline(d,w,h,sx,sy){
   }
   return tot>0&&hits/tot>0.004;
 }
+/* ===== importing a shelf of photos =====
+   You photograph a whole collection in one go - record, record, record, a flat
+   orange or blank frame to end a box, then the next box - and the app has to
+   reconstruct from that what was in which box and in which order. Three things
+   do it: the capture time orders the photos, the flat frames cut them into
+   boxes, and the first photo of a box is its front. Nothing here guesses at a
+   record's identity; that is still `identifyPhoto`'s job. */
+
+/* --- when was this taken --- */
+/* The order is the whole ballgame, so the timestamp comes out of the JPEG's own
+   EXIF block rather than the file's modification date: copying a folder off a
+   phone rewrites that date, and downloading it again rewrites it a second time.
+   Two photos can still share a second, so the number in the filename breaks the
+   tie - phones write IMG_0001, IMG_0002 in the order the shutter fired. */
+function readHead(file,n){
+  return new Promise(res=>{
+    try{
+      const r=new FileReader();
+      r.onload=()=>res(new DataView(r.result));
+      r.onerror=()=>res(null);
+      r.readAsArrayBuffer(file.slice?file.slice(0,n):file);
+    }catch(e){ res(null); }
+  });
+}
+function exifFromBuffer(v){
+  try{
+    if(!v||v.byteLength<12||v.getUint16(0)!==0xFFD8) return null;
+    let off=2,tiff=-1;
+    while(off+4<=v.byteLength){
+      if(v.getUint8(off)!==0xFF) break;
+      const marker=v.getUint8(off+1);
+      if(marker===0xD8||marker===0x01||(marker>=0xD0&&marker<=0xD7)){ off+=2; continue; }
+      if(marker===0xDA) break;                       // image data - no EXIF after this
+      const len=v.getUint16(off+2);
+      if(len<2) break;
+      if(marker===0xE1&&off+10<=v.byteLength){
+        let tag=''; for(let i=0;i<4;i++) tag+=String.fromCharCode(v.getUint8(off+4+i));
+        if(tag==='Exif'){ tiff=off+10; break; }
+      }
+      off+=2+len;
+    }
+    if(tiff<0||tiff+8>v.byteLength) return null;
+    const bo=v.getUint16(tiff);
+    if(bo!==0x4949&&bo!==0x4D4D) return null;
+    const LE=(bo===0x4949);
+    const u16=o=>v.getUint16(o,LE),u32=o=>v.getUint32(o,LE);
+    if(u16(tiff+2)!==0x002A) return null;
+    const str=(o,n)=>{ let s=''; for(let i=0;i<n&&o+i<v.byteLength;i++){ const c=v.getUint8(o+i); if(!c) break; s+=String.fromCharCode(c); } return s; };
+    const walk=(ifd,want)=>{
+      const out={};
+      if(ifd+2>v.byteLength) return out;
+      const n=u16(ifd);
+      for(let i=0;i<n;i++){
+        const e=ifd+2+i*12;
+        if(e+12>v.byteLength) break;
+        const tag=u16(e),type=u16(e+2),cnt=u32(e+4);
+        if(want.indexOf(tag)<0) continue;
+        if(type===3) out[tag]=u16(e+8);
+        else if(type===4) out[tag]=u32(e+8);
+        else { const size=cnt; out[tag]=size>4?str(tiff+u32(e+8),Math.min(size,32)):str(e+8,Math.min(size,4)); }
+      }
+      return out;
+    };
+    const ifd0=walk(tiff+u32(tiff+4),[0x8769,0x0132]);
+    let dt=null,sub=0;
+    if(ifd0[0x8769]!==undefined){
+      const ex=walk(tiff+ifd0[0x8769],[0x9003,0x9004,0x9291,0x9292]);
+      dt=ex[0x9003]||ex[0x9004]||null;
+      const ss=((ex[0x9291]||ex[0x9292]||'')+'').replace(/\D/g,'').slice(0,3);
+      sub=ss?parseInt((ss+'000').slice(0,3),10):0;     // "9" is .900s, not 9 ms
+    }
+    if(!dt) dt=ifd0[0x0132]||null;
+    if(!dt) return null;
+    const m=(dt+'').match(/(\d{4}):(\d{2}):(\d{2})[ T](\d{2}):(\d{2}):(\d{2})/);
+    if(!m) return null;
+    const ms=new Date(+m[1],+m[2]-1,+m[3],+m[4],+m[5],+m[6]).getTime();
+    if(!isFinite(ms)) return null;
+    return {ms,sub};
+  }catch(e){ return null; }
+}
+function seqFromName(name){
+  const m=(name||'').match(/(\d+)(?!.*\d)/);        // the last run of digits
+  return m?parseInt(m[1],10):0;
+}
+async function captureTime(file){
+  const t=exifFromBuffer(await readHead(file,256*1024));
+  return {ms:t?t.ms:(file.lastModified||0), sub:t?t.sub:0, exif:!!t, seq:seqFromName(file.name), name:file.name||''};
+}
+function byCaptureOrder(a,b){
+  return (a.ms-b.ms)||(a.sub-b.sub)||(a.seq-b.seq)||String(a.name).localeCompare(String(b.name));
+}
+
+/* --- is this frame a divider --- */
+/* A divider is a frame with nothing in it: one flat colour edge to edge. A photo
+   of a sleeve never is - the sleeve has artwork or lettering, and the surface it
+   lies on shows at the edges - so flatness alone separates the two. The colour
+   then says how sure we are: the dark orange card and a blank sheet are what
+   this collection was shot with, so those count as dividers outright. A flat
+   frame in some other colour is reported but kept as a record, because an
+   unexpected divider costs one tap in the review list and a lost record costs
+   a slot in the wrong box. */
+function frameStats(drawable){
+  try{
+    const N=48,cv=document.createElement('canvas');
+    cv.width=cv.height=N;
+    const cx=cv.getContext('2d',{willReadFrequently:true});
+    cx.drawImage(drawable,0,0,N,N);
+    const d=cx.getImageData(0,0,N,N).data,n=N*N;
+    let mr=0,mg=0,mb=0;
+    for(let i=0;i<n;i++){ mr+=d[i*4]; mg+=d[i*4+1]; mb+=d[i*4+2]; }
+    mr/=n; mg/=n; mb/=n;
+    let off=0,ls=0,lss=0;
+    for(let i=0;i<n;i++){
+      const r=d[i*4],g=d[i*4+1],b=d[i*4+2];
+      if(Math.abs(r-mr)+Math.abs(g-mg)+Math.abs(b-mb)>60) off++;
+      const l=r*0.299+g*0.587+b*0.114; ls+=l; lss+=l*l;
+    }
+    const lm=ls/n,lstd=Math.sqrt(Math.max(0,lss/n-lm*lm));
+    const mx=Math.max(mr,mg,mb),mn=Math.min(mr,mg,mb);
+    const sat=mx?(mx-mn)/mx:0;
+    let hue=0;
+    if(mx!==mn){
+      if(mx===mr) hue=60*(((mg-mb)/(mx-mn))%6);
+      else if(mx===mg) hue=60*((mb-mr)/(mx-mn)+2);
+      else hue=60*((mr-mg)/(mx-mn)+4);
+      if(hue<0) hue+=360;
+    }
+    return {mean:[Math.round(mr),Math.round(mg),Math.round(mb)],off:off/n,lstd,sat,hue,val:mx/255};
+  }catch(e){ return null; }
+}
+function classifyFrame(st){
+  if(!st) return {sep:false,kind:'photo'};
+  const flat=(st.off<0.06&&st.lstd<16);
+  if(!flat) return {sep:false,kind:'photo',st};
+  if(st.hue>=10&&st.hue<=55&&st.sat>=0.30) return {sep:true,kind:'orange',st};
+  if(st.sat<0.15) return {sep:true,kind:'blank',st};
+  return {sep:false,kind:'flat',st};               // flat but not a colour we shoot dividers in
+}
+
+/* --- photos -> boxes --- */
+/* Dividers cut the run of photos; whatever lies between two of them is one box.
+   Leading, trailing and doubled dividers produce nothing rather than an empty
+   box. `frontFirst` is how the collection was shot: the front record of a box
+   photographed first, so within a box the capture order runs front to back and
+   the slot numbers - which this app counts from the back - run the other way. */
+function groupIntoCases(items){
+  const cases=[]; let cur=[];
+  for(const it of items){
+    if(it.sep){ if(cur.length) cases.push(cur); cur=[]; }
+    else cur.push(it);
+  }
+  if(cur.length) cases.push(cur);
+  return cases;
+}
+function positionsFor(photos,frontFirst){
+  const n=photos.length;
+  return photos.map((p,i)=>({photo:p,position:frontFirst?n-i:i+1}));
+}
 function downscale(file){
   return new Promise(res=>{
     const img=new Image(),url=URL.createObjectURL(file);
@@ -1992,6 +2286,311 @@ function trimSquare(img,max){
       cv.getContext('2d').drawImage(tmp,cx,cy,cw,ch,0,0,cv.width,cv.height);
       return cv.toDataURL('image/jpeg',0.82);
   }catch(e){ try{ return resizeSquare(img,max||600); }catch(e2){ return null; } }
+}
+
+/* ===== import a whole shelf from photos =====
+   The way the collection was actually photographed: record after record, a flat
+   orange or blank frame to close a box, then the next box. This screen turns
+   that run of photos back into boxes and slots - see the engine above
+   (`captureTime`, `classifyFrame`, `groupIntoCases`) for how.
+
+   Two rules hold throughout, because getting them wrong is expensive:
+     - **The cover stored for a record is the photograph you took.** Never the
+       artwork a database handed back. Identification is only ever allowed to
+       fill in artist, title, year and genre, so what you see in the collection
+       is always the sleeve that was in front of the camera.
+     - A record's details are filled in only when the artwork itself confirms
+       the match (`identifyPhoto`'s own `ok`, which needs both a close distance
+       and a clear gap to the runner-up). Anything less is added as a
+       placeholder that keeps its slot, for you to finish by hand - the app
+       would rather leave a line blank than file a record under the wrong name.
+   Nothing is written to the collection until you press the button at the end. */
+function openImport(){
+  const sheet=modal(`<div class="grab"></div><h2>Import zdjęć</h2><div id="impBody"></div>`);
+  const body=()=>sheet.querySelector('#impBody');
+  let items=[];                 // every photo read, in capture order
+  let frontFirst=true;          // first photo of a box = its front record
+  let idTotal=0,idDone=0,idRun=false;
+  const caseNames=new Map();    // keyed by the box's first photo, so a re-render keeps it
+  const pool=makePool(3);
+
+  /* ---------- 1. what this does ---------- */
+  function showIntro(){
+    body().innerHTML=`
+      <div class="srcline" style="margin-bottom:12px">Wybierz wszystkie zdjęcia naraz — też z pobranego folderu z Dysku.</div>
+      <div style="font-size:14px;color:var(--paper-2);line-height:1.6;margin-bottom:14px">
+        <div>① Kolejność bierze się z <b>daty zrobienia zdjęcia</b>, nie z nazwy pliku.</div>
+        <div>② <b>Przekładka</b> — zdjęcie jednolicie pomarańczowe albo puste — kończy skrzynkę.</div>
+        <div>③ <b>Pierwsze zdjęcie w skrzynce to przód</b> (można odwrócić przed dodaniem).</div>
+        <div>④ Okładką płyty zostaje <b>Twoje zdjęcie</b>. Nazwy dopisujemy tylko wtedy, gdy okładka się zgadza.</div>
+      </div>
+      <button class="btn" id="impPick" style="width:100%;font-size:16px;padding:16px">📂  Wybierz zdjęcia</button>
+      <div style="text-align:center;margin-top:12px"><a href="#" id="impClose" style="color:var(--amber);font-size:14px">← Zamknij</a></div>`;
+    body().querySelector('#impPick').onclick=pick;
+    body().querySelector('#impClose').onclick=e=>{e.preventDefault();closeModal();};
+  }
+  function pick(){
+    const inp=document.createElement('input');
+    inp.type='file'; inp.accept='image/*'; inp.multiple=true;
+    inp.onchange=()=>{ const fs=[...(inp.files||[])]; if(fs.length) readAll(fs); };
+    inp.click();
+  }
+
+  /* ---------- 2. read every photo once ---------- */
+  /* One pass per file and the decoded image is dropped straight after: a hundred
+     full-resolution phone photos held open at once is how a browser tab dies.
+     Out of each one we keep only what later screens need - the square cover, a
+     small tile, the flatness statistics and the capture time. */
+  async function readAll(files){
+    items=[];
+    const draw=n=>{ const el=body().querySelector('#impRead'); if(el) el.textContent=n+' / '+files.length;
+                    const b=body().querySelector('#impReadBar'); if(b) b.style.width=Math.round(n/files.length*100)+'%'; };
+    body().innerHTML=`<div class="spin"><div class="ring"></div>Czytam zdjęcia… <span id="impRead">0 / ${files.length}</span></div>
+      <div class="imp-bar"><i id="impReadBar" style="width:0"></i></div>
+      <div class="srcline">Zostaw telefon na chwilę — przy stu zdjęciach to potrwa.</div>`;
+    let i=0;
+    for(const f of files){
+      if(!/^image\//.test(f.type||'')&&!/\.(jpe?g|png|webp|heic|heif)$/i.test(f.name||'')){ draw(++i); continue; }
+      const t=await captureTime(f);
+      const url=URL.createObjectURL(f);
+      const im=await loadImg(url);
+      if(im){
+        const st=frameStats(im);
+        const cls=classifyFrame(st);
+        items.push(Object.assign({
+          id:uid(), file:f.name||'', cover:trimSquare(im,600), thumb:resizeSquare(im,96,0.6),
+          stats:st, kind:cls.kind, sep:cls.sep, autoSep:cls.sep,
+          status:'pending', data:null, candidates:[], best:null, dist:null
+        },t));
+      }
+      URL.revokeObjectURL(url);
+      draw(++i);
+      await new Promise(r=>setTimeout(r,0));          // let the progress bar actually paint
+    }
+    items.sort(byCaptureOrder);
+    if(!items.length){ body().innerHTML='<div class="spin">Nie udało się odczytać żadnego zdjęcia</div>'; setTimeout(showIntro,1600); return; }
+    startIdentify();
+    showReview();
+  }
+
+  /* ---------- 3. identification in the background ---------- */
+  function identifyOne(it){
+    idTotal++;
+    pool.run(async()=>{
+      if(it.sep||!idRun) return;                      // became a divider while it queued
+      let r=null;
+      try{ r=await identifyPhoto(it.cover); }catch(e){ if(!it.edited) it.status='error'; return; }
+      /* These lookups take seconds, and you are reviewing the list the whole
+         time. Anything you touched by hand wins: the candidates are still worth
+         keeping for the picker, but the name and the status are yours. */
+      it.candidates=r.candidates||[];
+      if(it.edited) return;
+      it.best=r.best||null;
+      it.dist=r.best&&r.best.dist!==undefined?r.best.dist:null;
+      if(r.status==='ok'){ it.data=importData(r.best); it.status='ok'; }
+      else it.status=r.status==='ambiguous'?'ambiguous':'none';
+    }).then(()=>{ idDone++; touchTile(it); touchProgress(); });
+  }
+  function startIdentify(){
+    idTotal=0; idDone=0; idRun=true;
+    items.filter(it=>!it.sep&&it.status==='pending').forEach(identifyOne);
+    touchProgress();
+  }
+  /* Metadata only. The cover deliberately does not come from here. */
+  function importData(c){
+    if(!c) return null;
+    return {artist:c.artist||'',title:c.title||'',year:c.year||'',genre:c.genre||''};
+  }
+  function matchPct(d){ return d===null||d===undefined?'':Math.round((1-Math.min(1,d))*100)+'%'; }
+
+  /* ---------- 4. review: boxes, slots, what was recognised ---------- */
+  function cases(){ return groupIntoCases(items); }
+  function stat(){
+    const recs=items.filter(it=>!it.sep);
+    return {recs:recs.length, seps:items.length-recs.length, cs:cases().length,
+            ok:recs.filter(r=>r.status==='ok').length,
+            todo:recs.filter(r=>r.status!=='ok').length};
+  }
+  function touchProgress(){
+    const el=body().querySelector('#impProg'); if(!el) return;
+    const s=stat();
+    el.innerHTML=idDone<idTotal
+      ? `Rozpoznaję okładki: <b>${idDone}</b> / ${idTotal}<div class="imp-bar"><i style="width:${idTotal?Math.round(idDone/idTotal*100):0}%"></i></div>`
+      : `Rozpoznano <b>${s.ok}</b> z ${s.recs} · <b>${s.todo}</b> do uzupełnienia`;
+    const btn=body().querySelector('#impGo'); if(btn) btn.textContent=goLabel();
+  }
+  function goLabel(){
+    const s=stat();
+    return idDone<idTotal
+      ? `Dodaj ${s.recs} ${plPly(s.recs)} w ${s.cs} ${s.cs===1?'skrzynce':'skrzynkach'} — ${idTotal-idDone} w toku`
+      : `Dodaj ${s.recs} ${plPly(s.recs)} w ${s.cs} ${s.cs===1?'skrzynce':'skrzynkach'}`;
+  }
+  function tileHTML(it,slot){
+    const mk=it.status==='ok'?'✓':(it.status==='pending'?'…':(it.status==='ambiguous'?'?':'✗'));
+    const nm=it.data&&(it.data.title||it.data.artist)?esc(it.data.title||it.data.artist):'';
+    return `<span class="slot">${slot}</span><img src="${it.thumb}" alt="">
+      <span class="mk">${mk}</span>${nm?`<span class="nm">${nm}</span>`:''}`;
+  }
+  function touchTile(it){
+    const t=sheet.querySelector('[data-imp="'+it.id+'"]');
+    if(!t) return;
+    t.className='imp-tile '+it.status;
+    t.innerHTML=tileHTML(it,t.dataset.slot);
+  }
+  function showReview(){
+    const s=stat();
+    const cs=cases();
+    body().innerHTML=`
+      <div id="impProg" style="font-size:13px;color:var(--paper-2);margin-bottom:8px"></div>
+      <div class="srcline">${s.recs} ${plPly(s.recs)} · ${s.cs} ${s.cs===1?'skrzynka':'skrzynek'} · ${s.seps} ${s.seps===1?'przekładka':'przekładek'}. Dotknij płytę, żeby sprawdzić albo poprawić.</div>
+      <button class="btn ghost" id="impFlip" style="width:100%;margin:10px 0 2px;font-size:13px;padding:11px">
+        ${frontFirst?'Pierwsze zdjęcie = <b>przód</b> skrzynki':'Pierwsze zdjęcie = <b>tył</b> skrzynki'} · odwróć</button>
+      <div id="impCases"></div>
+      <button class="btn" id="impGo" style="width:100%;margin-top:14px;font-size:16px;padding:16px">${goLabel()}</button>
+      <div style="text-align:center;margin-top:10px"><a href="#" id="impCancel" style="color:var(--faint);font-size:13px">Anuluj import</a></div>`;
+    const host=body().querySelector('#impCases');
+    /* One pass over the photos in the order they were shot: a run of records
+       becomes a box, every divider becomes a line between them. Dividers that
+       sit before the first box or after the last one still get drawn - you can
+       undo one that shouldn't be there. */
+    let run=[],ci=0;
+    const flush=()=>{
+      if(!run.length) return;
+      const photos=run, idx=ci++;
+      const key=photos[0].id;
+      if(!caseNames.has(key)) caseNames.set(key,'Skrzynka '+(state.crates.length+idx+1));
+      const sec=el(`<div>
+        <div class="imp-h"><input value="${esc(caseNames.get(key))}" spellcheck="false">
+          <span class="cnt">${photos.length} ${plPly(photos.length)}</span></div>
+        <div class="imp-grid"></div></div>`);
+      const grid=sec.querySelector('.imp-grid');
+      positionsFor(photos,frontFirst).forEach(({photo,position})=>{
+        const t=el(`<div class="imp-tile ${photo.status}" data-imp="${photo.id}" data-slot="${position}"></div>`);
+        t.innerHTML=tileHTML(photo,position);
+        t.onclick=()=>showDetail(photo);
+        grid.appendChild(t);
+      });
+      sec.querySelector('input').oninput=e=>caseNames.set(key,e.target.value);
+      host.appendChild(sec);
+      run=[];
+    };
+    for(const it of items){
+      if(it.sep){ flush(); host.appendChild(dividerRow(it)); }
+      else run.push(it);
+    }
+    flush();
+    touchProgress();
+    body().querySelector('#impFlip').onclick=()=>{ frontFirst=!frontFirst; showReview(); };
+    body().querySelector('#impGo').onclick=()=>commit();
+    body().querySelector('#impCancel').onclick=e=>{e.preventDefault();idRun=false;closeModal();};
+  }
+  function dividerRow(sp){
+    const c=sp.stats?sp.stats.mean:[0,0,0];
+    const row=el(`<div class="imp-sep" data-sep="${sp.id}">
+      <span class="sw" style="background:rgb(${c[0]},${c[1]},${c[2]})"></span>
+      <span>przekładka${sp.kind==='orange'?' (pomarańczowa)':(sp.kind==='blank'?' (pusta)':'')} — koniec skrzynki</span>
+      <span class="ln"></span>
+      <button data-act="unsep">to płyta, nie przekładka</button></div>`);
+    row.querySelector('[data-act="unsep"]').onclick=()=>{
+      sp.sep=false;
+      if(sp.status==='pending') identifyOne(sp);     // it was skipped as a divider
+      showReview();
+    };
+    return row;
+  }
+
+  /* ---------- 5. one record up close ---------- */
+  /* Your photograph on the left, what the match thinks it is on the right, and
+     the artwork distance between them as a percentage. This is the screen that
+     makes "the covers are the ones I took" checkable rather than a promise. */
+  function showDetail(it){
+    const d=it.data||{};
+    const cand=it.best;
+    const alts=(it.candidates||[]).slice(0,6);
+    body().innerHTML=`
+      <h3 style="margin:2px 0 2px;font-size:17px">${esc(d.title||d.artist||'Do uzupełnienia')}</h3>
+      <div class="srcline">${it.file?esc(it.file)+' · ':''}${it.exif?new Date(it.ms).toLocaleString('pl'):'brak daty EXIF — użyto daty pliku'}</div>
+      <div class="imp-cmp">
+        <div><img src="${it.cover}" alt=""><div class="cap">Twoje zdjęcie<br><b>to zostanie okładką</b></div></div>
+        <div><img src="${cand?esc(cand.coverBig||cand.cover||''):''}" alt=""
+          onerror="this.style.visibility='hidden'"><div class="cap">${cand?'Dopasowanie '+matchPct(it.dist):'brak dopasowania'}</div></div>
+      </div>
+      ${it.status==='ok'?'':`<div class="imp-warn">Okładka nie zgadza się na tyle, żeby wpisać nazwę automatycznie. Płyta zachowa swoje miejsce w skrzynce — nazwę można wybrać poniżej albo dopisać później.</div>`}
+      <label class="fld"><span>Wykonawca</span><input id="impArtist" value="${esc(d.artist||'')}"></label>
+      <label class="fld"><span>Tytuł</span><input id="impTitle" value="${esc(d.title||'')}"></label>
+      <div style="display:flex;gap:10px">
+        <label class="fld" style="flex:1"><span>Rok</span><input id="impYear" value="${esc(d.year||'')}"></label>
+        <label class="fld" style="flex:1"><span>Gatunek</span><input id="impGenre" value="${esc(d.genre||'')}"></label>
+      </div>
+      ${alts.length?`<div class="srcline" style="margin-top:6px">Inne okładki — wybierz tę, która zgadza się z Twoim zdjęciem:</div>
+      <div class="cands">${alts.map((c,i)=>`<div class="cand" data-alt="${i}">
+        <img src="${esc(c.cover||c.coverBig||'')}" alt="" loading="lazy">
+        <div class="cn">${esc(c.title||'')}<div class="cm">${matchPct(c.dist)}</div></div></div>`).join('')}</div>`:''}
+      <button class="btn ghost" id="impMakeSep" style="width:100%;margin-top:10px;font-size:13px">To przekładka — podziel tutaj skrzynkę</button>
+      <button class="btn ghost" id="impDrop" style="width:100%;margin-top:8px;font-size:13px;border-color:var(--oxblood);color:var(--oxblood)">Wyrzuć to zdjęcie z importu</button>
+      <div style="text-align:center;margin-top:12px"><a href="#" id="impBack" style="color:var(--amber);font-size:14px">← Wróć do listy</a></div>`;
+    const grab=()=>{
+      const g=id=>(body().querySelector(id)||{}).value||'';
+      const v={artist:g('#impArtist').trim(),title:g('#impTitle').trim(),year:g('#impYear').trim(),genre:g('#impGenre').trim()};
+      const was=JSON.stringify(it.data||{});
+      if(v.artist||v.title){ it.data=v; it.status='ok'; } else { it.data=null; if(it.status==='ok') it.status='none'; }
+      if(JSON.stringify(it.data||{})!==was) it.edited=true;   // yours now - a late lookup must not undo it
+    };
+    body().querySelectorAll('[data-alt]').forEach(n=>n.onclick=()=>{
+      /* You picked the sleeve that matches your photo, so this counts as
+         confirmation - the same bar as a decisive automatic match. */
+      const c=alts[+n.dataset.alt];
+      it.data=importData(c); it.best=c; it.dist=c.dist!==undefined?c.dist:it.dist;
+      it.status='ok'; it.edited=true;
+      showDetail(it);
+    });
+    body().querySelector('#impMakeSep').onclick=()=>{ grab(); it.sep=true; it.edited=true; showReview(); };
+    body().querySelector('#impDrop').onclick=()=>{ items=items.filter(x=>x!==it); showReview(); };
+    body().querySelector('#impBack').onclick=e=>{ e.preventDefault(); grab(); showReview(); };
+  }
+
+  /* ---------- 6. write it into the collection ---------- */
+  async function commit(){
+    idRun=false;
+    const cs=cases();
+    if(!cs.length){ toast('Nie ma czego dodać'); return; }
+    body().innerHTML=`<div class="spin"><div class="ring"></div>Zapisuję…</div>`;
+    let recs=0,placeholders=0;
+    cs.forEach((photos,ci)=>{
+      const fallback='Skrzynka '+(state.crates.length+1);
+      const crate={id:uid(),name:(caseNames.get(photos[0].id)||fallback).trim()||fallback,
+                   tagColor:TAGS[state.crates.length%TAGS.length],closed:true};
+      state.crates.push(crate);
+      for(const {photo,position} of positionsFor(photos,frontFirst)){
+        const d=photo.data||{};
+        const has=!!(d.title||d.artist);
+        state.albums.push({id:photo.id,crateId:crate.id,position,
+          artist:d.artist||'',title:d.title||'',genre:d.genre||'',mood:'',year:d.year||'',
+          cover:'local',                       // always the photograph that was taken
+          rating:0,pending:has?undefined:true});
+        if(has) recs++; else placeholders++;
+      }
+    });
+    // the photographs themselves, full size, on the device
+    for(const it of items){ if(!it.sep) await saveCover(it.id,it.cover); }
+    await sset('winyle-meta',{crates:state.crates,albums:state.albums});
+    const synced=await cloudPush();
+    const s=lastSync||{};
+    body().innerHTML=`
+      <div style="text-align:center;padding:6px 0 2px;font-size:44px">📦</div>
+      <h3 style="text-align:center;margin:0 0 6px;font-size:18px">Dodano ${recs+placeholders} ${plPly(recs+placeholders)} w ${cs.length} ${cs.length===1?'skrzynce':'skrzynkach'}</h3>
+      <div class="srcline">${recs} z nazwą · ${placeholders} do uzupełnienia. Okładki to Twoje zdjęcia.</div>
+      <div class="imp-warn" style="${synced?'background:rgba(136,196,122,.12);border-color:rgba(136,196,122,.45)':''}">
+        ${synced?'✓ Zsynchronizowano — skrzynki i płyty są w chmurze'
+                  +(s.thumbs?', miniatury okładek: '+s.thumbs:'')
+                  +(s.skipped?'. Pełne okładki '+s.skipped+' płyt zostają tylko na tym telefonie':'')+'.'
+                :'✗ Nie udało się zsynchronizować. Kolekcja jest zapisana na telefonie — spróbuj później w Ustawieniach.'}
+      </div>
+      <button class="btn" id="impDone" style="width:100%;margin-top:12px">Gotowe</button>`;
+    body().querySelector('#impDone').onclick=()=>{ closeModal(); state.crateId=null; render(); };
+  }
+
+  showIntro();
 }
 
 /* close summary */
@@ -2169,16 +2768,16 @@ function renderSettings(){
     <div style="padding:0 4px">
       <div class="card" style="padding:18px;margin-bottom:14px">
         <div style="font-weight:700;font-size:16px;margin-bottom:10px">☁ Synchronizacja</div>
-        <div style="font-size:14px;color:var(--paper-2);margin-bottom:14px">Twoja kolekcja jest synchronizowana z chmurą (GitHub). Możesz ręcznie wymusić synchronizację.</div>
+        <div style="font-size:14px;color:var(--paper-2);margin-bottom:14px">Skrzynki i płyty trafiają do chmury w całości. Okładki, które sam sfotografowałeś, zostają w pełnej jakości na tym telefonie, a do chmury idą ich miniatury — tyle, ile się zmieści.</div>
         <div style="display:flex;gap:10px">
           <button class="btn ghost" id="syncPush" style="flex:1;font-size:14px">↑ Wyślij do chmury</button>
           <button class="btn ghost" id="syncPull" style="flex:1;font-size:14px">↓ Pobierz z chmury</button>
         </div>
-        <div id="syncStatus" style="font-size:13px;color:var(--faint);margin-top:10px;text-align:center"></div>
+        <div id="syncStatus" style="font-size:13px;color:var(--faint);margin-top:10px;text-align:center">${lastSync?(lastSync.ok?'✓ ostatnio: '+new Date(lastSync.at).toLocaleTimeString('pl')+(lastSync.thumbs?' · miniatury: '+lastSync.thumbs:'')+(lastSync.skipped?' · '+lastSync.skipped+' tylko tutaj':''):'✗ ostatnia próba nieudana'):''}</div>
       </div>
       <div class="card" style="padding:18px;margin-bottom:14px">
         <div style="font-weight:700;font-size:16px;margin-bottom:10px">🔄 Aktualizacja aplikacji</div>
-        <div style="font-size:14px;color:var(--paper-2);margin-bottom:14px">Pobierz najnowszą wersję aplikacji. Twoja kolekcja zostanie zachowana w chmurze.</div>
+        <div style="font-size:14px;color:var(--paper-2);margin-bottom:14px">Aplikacja aktualizuje się sama — każda nowa wersja wgrana na serwer pojawia się po ponownym otwarciu. Tym przyciskiem wymusisz to od razu: kolekcja idzie do chmury, cache zostaje wyczyszczony i aplikacja wczytuje się na nowo.</div>
         <button class="btn" id="updateApp" style="width:100%;font-size:14px">Pobierz najnowszą wersję</button>
         <div id="updateStatus" style="font-size:13px;color:var(--faint);margin-top:10px;text-align:center"></div>
       </div>
@@ -2187,7 +2786,7 @@ function renderSettings(){
         <div style="font-size:14px;color:var(--paper-2)">Skrzynek: <b>${state.crates.length}</b></div>
         <div style="font-size:14px;color:var(--paper-2)">Płyt: <b>${state.albums.length}</b></div>
       </div>
-      <div style="text-align:center;padding:12px 0;font-size:12px;color:var(--faint)">Wersja 9 · ${new Date().toLocaleDateString('pl')}</div>
+      <div style="text-align:center;padding:12px 0;font-size:12px;color:var(--faint)">Wersja ${BUILD}${window.matchMedia('(display-mode: standalone)').matches?' · aplikacja':''}</div>
     </div>`;
   m.querySelector('#syncPush').onclick=async()=>{
     const st=m.querySelector('#syncStatus');
@@ -2201,7 +2800,7 @@ function renderSettings(){
     const cloud=await cloudPull();
     if(cloud){
       state.crates=cloud.crates||[];state.albums=cloud.albums||[];
-      if(cloud.covers){ for(const[id,d]of Object.entries(cloud.covers)) await saveCover(id,d); }
+      if(cloud.covers) await restoreCovers(cloud.covers);
       await sset('winyle-meta',{crates:state.crates,albums:state.albums});
       st.textContent='✓ Pobrano '+state.albums.length+' płyt'; st.style.color='var(--keep)';
     } else { st.textContent='✗ Brak danych w chmurze lub błąd'; st.style.color='var(--oxblood)'; }

@@ -3,6 +3,6 @@
   "target": {
     "namespace": "android_app",
     "package_name": "com.jarze07.winyle",
-    "sha256_cert_fingerprints": ["04:88:DF:E9:BE:5A:1C:D1:ED:A3:6B:C7:69:49:2F:8E:1F:D9:B2:DD:C2:6D:0B:AB:AA:0B:F5:7B:10:12:06:16"]
+    "sha256_cert_fingerprints": ["8C:E7:02:4B:1D:6B:A0:A2:AB:0E:2F:33:19:68:71:BD:BB:0C:43:F6:C5:38:A7:82:DA:2B:6E:C4:AD:97:A9:78"]
   }
 }]

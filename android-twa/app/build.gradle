@@ -1,0 +1,33 @@
+plugins { id "com.android.application" }
+
+android {
+  namespace "com.jarze07.winyle"
+  compileSdk 35
+
+  defaultConfig {
+    applicationId "com.jarze07.winyle"
+    minSdk 23
+    targetSdk 35
+    // versionCode must rise for every APK you want to install over the last one.
+    // The web app updates itself without a new APK, so this only moves when the
+    // shell changes; the workflow can override it with -PversionCode=.
+    versionCode project.hasProperty("versionCode") ? project.versionCode.toInteger() : 2
+    versionName project.hasProperty("versionName") ? project.versionName : "1.1"
+  }
+
+  buildTypes {
+    release {
+      minifyEnabled false
+      // No signingConfig on purpose: Gradle leaves the APK unsigned and the
+      // workflow signs it with apksigner using the keystore from repo secrets.
+    }
+  }
+  compileOptions {
+    sourceCompatibility JavaVersion.VERSION_17
+    targetCompatibility JavaVersion.VERSION_17
+  }
+}
+
+dependencies {
+  implementation "com.google.androidbrowserhelper:androidbrowserhelper:2.5.0"
+}

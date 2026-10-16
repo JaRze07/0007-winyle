@@ -1,0 +1,120 @@
+name: Android APK
+
+# Builds the signed Winyle APK and attaches it to a GitHub Release.
+# Trigger by pushing a tag like `v1.1`, or run it manually from the Actions tab.
+#
+# The APK is a Trusted Web Activity: a shell around https://jarze07.github.io/0007-winyle/.
+# There is no copy of the app inside it, so pushing to main is the update - every
+# phone picks it up the next time it opens. This workflow only needs running when
+# the shell itself changes (name, icon, colours, target URL) or when you want a
+# fresh file to hand someone.
+#
+# Signing uses the keystore in repo secrets. Its SHA-256 is published in
+# .well-known/assetlinks.json, which is what lets the app run without a browser
+# address bar across the top; the build fails loudly if the two stop matching.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      versionName:
+        description: 'Version name shown in Android settings'
+        default: '1.1'
+      versionCode:
+        description: 'Version code (must be higher than the installed one)'
+        default: '2'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: android-actions/setup-android@v3
+
+      # Gradle is pinned here rather than taken from the runner image: the Android
+      # plugin only supports a window of Gradle versions, and the image's version
+      # moves on its own.
+      - name: Fetch Gradle 8.9
+        run: |
+          curl -sSLo /tmp/gradle.zip https://services.gradle.org/distributions/gradle-8.9-bin.zip
+          unzip -q /tmp/gradle.zip -d /opt
+          /opt/gradle-8.9/bin/gradle --version
+
+      - name: Build release APK (unsigned)
+        working-directory: android-twa
+        run: |
+          /opt/gradle-8.9/bin/gradle assembleRelease --no-daemon \
+            -PversionName="${{ inputs.versionName || github.ref_name }}" \
+            -PversionCode="${{ inputs.versionCode || github.run_number }}"
+
+      - name: Decode signing keystore
+        run: echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/winyle.p12"
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+
+      - name: Zipalign & sign
+        id: sign
+        run: |
+          BUILD_TOOLS="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)"
+          IN="$(ls android-twa/app/build/outputs/apk/release/*.apk | head -1)"
+          "$BUILD_TOOLS/zipalign" -p -f 4 "$IN" "$RUNNER_TEMP/aligned.apk"
+          "$BUILD_TOOLS/apksigner" sign \
+            --ks "$RUNNER_TEMP/winyle.p12" \
+            --ks-key-alias "$ANDROID_KEY_ALIAS" \
+            --ks-pass env:KS_PASS \
+            --key-pass env:KEY_PASS \
+            --out winyle.apk "$RUNNER_TEMP/aligned.apk"
+          "$BUILD_TOOLS/apksigner" verify --print-certs winyle.apk | tee certs.txt
+          # The published assetlinks.json has to carry this APK's fingerprint, or
+          # the installed app falls back to showing a browser address bar.
+          APK_FP="$(grep -i 'SHA-256 digest' certs.txt | head -1 | sed 's/.*: *//' | tr -d ' ' | tr 'a-f' 'A-F' | sed 's/../&:/g; s/:$//')"
+          SITE_FP="$(python3 -c "import json;print(json.load(open('.well-known/assetlinks.json'))[0]['target']['sha256_cert_fingerprints'][0].upper())")"
+          echo "APK  : $APK_FP"
+          echo "site : $SITE_FP"
+          if [ "$APK_FP" != "$SITE_FP" ]; then
+            echo "::error::Signing certificate does not match .well-known/assetlinks.json - the app would open with an address bar. Update assetlinks.json to $APK_FP"
+            exit 1
+          fi
+        env:
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KS_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_PASS: ${{ secrets.ANDROID_KEY_PASSWORD }}
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: winyle-apk
+          path: winyle.apk
+
+      - name: Publish to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_type == 'tag' && github.ref_name || format('v{0}', inputs.versionName) }}
+          name: Winyle ${{ github.ref_type == 'tag' && github.ref_name || inputs.versionName }}
+          files: winyle.apk
+          body: |
+            **Winyle — aplikacja na Androida.**
+
+            Katalog kolekcji winyli: pakujesz płyty do skrzynek, a aplikacja pamięta,
+            w której skrzynce i na którym miejscu stoi każda z nich.
+
+            **Instalacja:** pobierz `winyle.apk`, zezwól przeglądarce albo menedżerowi
+            plików na „instalowanie nieznanych aplikacji", a potem otwórz pobrany plik.
+            Jeśli masz starą wersję Winyli — najpierw ją odinstaluj.
+
+            **Aktualizacje same się pobierają.** Aplikacja pokazuje stronę
+            <https://jarze07.github.io/0007-winyle/>, więc każda nowa wersja wgrana na
+            serwer pojawia się po ponownym otwarciu aplikacji — bez pobierania APK.
+            Ustawienia → *Pobierz najnowszą wersję* wymusza to od razu.
+            Nowy APK jest potrzebny tylko wtedy, gdy zmienia się sama ikona, nazwa
+            albo adres aplikacji.

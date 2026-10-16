@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <!-- matches manifest.json theme_color / background_color -->
+  <color name="colorPrimary">#2e2014</color>
+  <color name="colorPrimaryDark">#2e2014</color>
+  <color name="backgroundColor">#1c1207</color>
+  <color name="navigationColor">#1c1207</color>
+  <color name="launcherBackground">#1c1207</color>
+</resources>
