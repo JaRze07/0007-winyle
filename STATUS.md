@@ -87,6 +87,8 @@ Full description and setup: `README.md` in this repo.
     `/0007-winyle/` i nie ma starego `/winyle/`; `assetlinks.json` z nowym odciskiem jest już na Pages.
     `android-actions/setup-android@v3` nie działa (żąda nieistniejącego pakietu `tools`) — build używa SDK
     z obrazu runnera i przypiętego Gradle 8.9.
+  - Zdjęcia, których przeglądarka nie otworzy (HEIC, przypadkowe pliki), są **wypisane w podglądzie**, nie
+    znikają po cichu — brakujące zdjęcie przesunęłoby wszystkie płyty za nim o jedno miejsce.
   - Nie sprawdzone tutaj: sam aparat i instalacja APK na telefonie.
 - Done 2026-09-27: **continuous four-at-a-time scanning.** `openScanner` gained a third segment (`quad`) and a
   `startMode`, so "Cztery na raz" is no longer one-shot: the camera stays open and you shoot square after square.

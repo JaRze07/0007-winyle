@@ -52,6 +52,11 @@ zdjęć*. Pick every photo at once; the app reconstructs the boxes from them:
   Tap any record in the review list to see your photo and the proposed match
   side by side with the artwork distance between them.
 
+A photo the browser cannot open — HEIC, or something that isn't a photo at all —
+is **listed in the review screen** rather than quietly skipped, because a missing
+photo moves every record behind it up a slot without saying so. If your phone
+shoots HEIC, switch the camera to JPEG before photographing a collection.
+
 Nothing is written to the collection until you press the button at the end.
 
 **One at a time**, when that's all you need:

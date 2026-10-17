@@ -86,7 +86,9 @@ Android app later.
   a lost record costs a slot), and `groupIntoCases`/`positionsFor` (runs between
   dividers are boxes; the first photo of a box is its front, and this app numbers
   slots from the back, so `frontFirst` numbers them `n…1` — there is a button to
-  flip it). Two rules are deliberate and load-bearing: **the stored cover is always
+  flip it). A file that cannot be decoded (HEIC, or anything the picker let
+  through) is **listed in the review screen**, never dropped quietly: a photo
+  that vanishes moves every record behind it up a slot and says nothing. Two rules are deliberate and load-bearing: **the stored cover is always
   the user's own photograph** (`cover:'local'`, never a candidate's artwork URL),
   and metadata is filled in only on `identifyPhoto`'s own `ok`; anything weaker
   becomes an `album.pending` placeholder holding its slot. The per-record screen

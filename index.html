@@ -254,7 +254,7 @@
 /* ===== storage =====
    Online sync via Supabase when configured (CONFIG below), otherwise on-device
    localStorage. Same key/value interface either way. */
-const BUILD=11;                 // bump with sw.js CACHE - shown in Ustawienia
+const BUILD=12;                 // bump with sw.js CACHE - shown in Ustawienia
 const CONFIG={ SUPABASE_URL:'', SUPABASE_KEY:'', CLAUDE_PROXY:'https://winyle-api.winyle-jr.workers.dev/api/claude', WORKER_URL:'https://winyle-api.winyle-jr.workers.dev' };   // SUPABASE_*: online sync · CLAUDE_PROXY: optional smart lookup · WORKER_URL: cloud sync
 const ONLINE=()=>!!(CONFIG.SUPABASE_URL&&CONFIG.SUPABASE_KEY);
 function supaHeaders(extra){ return Object.assign({apikey:CONFIG.SUPABASE_KEY,Authorization:'Bearer '+CONFIG.SUPABASE_KEY},extra||{}); }
@@ -2315,6 +2315,7 @@ function openImport(){
   let items=[];                 // every photo read, in capture order
   let frontFirst=true;          // first photo of a box = its front record
   let idTotal=0,idDone=0,idRun=false;
+  let skipped=[];               // files that never became records - always shown, never swallowed
   const caseNames=new Map();    // keyed by the box's first photo, so a re-render keeps it
   const pool=makePool(3);
 
@@ -2346,7 +2347,7 @@ function openImport(){
      Out of each one we keep only what later screens need - the square cover, a
      small tile, the flatness statistics and the capture time. */
   async function readAll(files){
-    items=[];
+    items=[]; skipped=[];
     const draw=n=>{ const el=body().querySelector('#impRead'); if(el) el.textContent=n+' / '+files.length;
                     const b=body().querySelector('#impReadBar'); if(b) b.style.width=Math.round(n/files.length*100)+'%'; };
     body().innerHTML=`<div class="spin"><div class="ring"></div>Czytam zdjęcia… <span id="impRead">0 / ${files.length}</span></div>
@@ -2354,7 +2355,12 @@ function openImport(){
       <div class="srcline">Zostaw telefon na chwilę — przy stu zdjęciach to potrwa.</div>`;
     let i=0;
     for(const f of files){
-      if(!/^image\//.test(f.type||'')&&!/\.(jpe?g|png|webp|heic|heif)$/i.test(f.name||'')){ draw(++i); continue; }
+      /* A photo that quietly fails to arrive is the worst thing that can happen
+         here: every record behind it in the box moves up a slot and nothing says
+         so. Both ways a file can fall out are collected and shown instead. */
+      if(!/^image\//.test(f.type||'')&&!/\.(jpe?g|png|webp|heic|heif)$/i.test(f.name||'')){
+        skipped.push({name:f.name||'(bez nazwy)',why:'to nie jest zdjęcie'}); draw(++i); continue;
+      }
       const t=await captureTime(f);
       const url=URL.createObjectURL(f);
       const im=await loadImg(url);
@@ -2366,13 +2372,21 @@ function openImport(){
           stats:st, kind:cls.kind, sep:cls.sep, autoSep:cls.sep,
           status:'pending', data:null, candidates:[], best:null, dist:null
         },t));
+      } else {
+        skipped.push({name:f.name||'(bez nazwy)',
+          why:/\.(heic|heif)$/i.test(f.name||'')?'format HEIC — telefon go nie otworzy':'nie udało się otworzyć'});
       }
       URL.revokeObjectURL(url);
       draw(++i);
       await new Promise(r=>setTimeout(r,0));          // let the progress bar actually paint
     }
     items.sort(byCaptureOrder);
-    if(!items.length){ body().innerHTML='<div class="spin">Nie udało się odczytać żadnego zdjęcia</div>'; setTimeout(showIntro,1600); return; }
+    if(!items.length){
+      body().innerHTML=`<div class="spin">Nie udało się odczytać żadnego zdjęcia</div>
+        ${skipped.length?'<div class="imp-warn">'+skipped.length+' plików nie dało się otworzyć'
+          +(skipped.some(x=>/HEIC/.test(x.why))?'. Wygląda na HEIC — w aparacie telefonu przełącz zdjęcia na JPEG i zrób zrzut/eksport tych plików.':'')+'</div>':''}`;
+      setTimeout(showIntro,2600); return;
+    }
     startIdentify();
     showReview();
   }
@@ -2457,6 +2471,7 @@ function openImport(){
     body().innerHTML=`
       <div id="impProg" style="font-size:13px;color:var(--paper-2);margin-bottom:8px"></div>
       <div class="srcline">${s.recs} ${plPly(s.recs)} · ${s.cs} ${s.cs===1?'skrzynka':'skrzynek'} · ${s.seps} ${s.seps===1?'przekładka':'przekładek'}. Dotknij płytę, żeby sprawdzić albo poprawić.</div>
+      ${skipped.length?`<div class="imp-warn"><b>${skipped.length} ${skipped.length===1?'zdjęcie nie weszło':'zdjęć nie weszło'} do importu</b> — bez nich płyty za nimi przesunęłyby się o jedno miejsce, więc sprawdź, czy to nie są płyty:<div style="margin-top:6px;font-size:12px;color:var(--faint);font-family:var(--mono);line-height:1.5">${skipped.slice(0,8).map(x=>esc(x.name)+' — '+esc(x.why)).join('<br>')}${skipped.length>8?'<br>…i '+(skipped.length-8)+' więcej':''}</div></div>`:''}
       <button class="btn ghost" id="impFlip" style="width:100%;margin:10px 0 2px;font-size:13px;padding:11px">
         ${frontFirst?'Pierwsze zdjęcie = <b>przód</b> skrzynki':'Pierwsze zdjęcie = <b>tył</b> skrzynki'} · odwróć</button>
       <div id="impCases"></div>
