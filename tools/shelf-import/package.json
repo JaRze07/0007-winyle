@@ -1,0 +1,7 @@
+{
+  "name": "winyle-shelf-import",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Server-side twin of the app's photo import, for doing a whole shelf at once",
+  "dependencies": { "jpeg-js": "0.4.4" }
+}
