@@ -5,15 +5,18 @@
    photo of a box is its front, THE STORED COVER IS THE PHOTOGRAPH, and a name
    is only written when the artwork actually matches.
 
-   usage: node run.js <folder> [--upload] [--budget-kb 900]
-          without --upload it identifies and reports, and writes nothing. */
+   usage: node run.js <folder> [--upload [--replace]] [--budget-kb 900]
+          without --upload it identifies and reports, and writes nothing.
+          --upload REPLACES the cloud collection (it does not merge), so it
+          stops if the cloud already holds records unless --replace is given. */
 const fs=require('fs'),path=require('path');
 const E=require('./engine.js');
 const UA='Mozilla/5.0 (Linux; Android 14; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Mobile Safari/537.36';
-const WORKER='https://winyle-api.winyle-jr.workers.dev';
+const WORKER=process.env.WINYLE_WORKER||'https://winyle-api.winyle-jr.workers.dev';   // the env var is for trying this against a stand-in
 const COVER_ACCEPT=0.62, COVER_MARGIN=0.06;
 const folder=process.argv[2];
 const UPLOAD=process.argv.includes('--upload');
+const REPLACE=process.argv.includes('--replace');
 const _bi=process.argv.indexOf('--budget-kb');
 const BUDGET=1024*((_bi>0&&parseInt(process.argv[_bi+1],10))||900);   // indexOf -1 used to make this NaN,
                                                                       // which silently forced the smallest covers
@@ -195,6 +198,25 @@ async function identify(photoSig,coverDataUrl){
   fs.writeFileSync(path.join(folder,'winyle-import-report.json'),JSON.stringify({collection,report:recs.map(r=>({name:r.name,res:r.res}))},null,1));
 
   if(!UPLOAD){ console.log('\n(nie wysłano — uruchom z --upload)'); return; }
+
+  /* The upload below is the whole collection, not an addition to it: whatever
+     the cloud holds is replaced. Look first, and do not write over records -
+     or over a collection that could not be read - without being told to. */
+  if(!REPLACE){
+    let cur=null,why='';
+    try{
+      const r0=await fetch(WORKER+'/api/db',{headers:{'User-Agent':UA},cache:'no-store'});
+      if(r0.ok) cur=await r0.json(); else why='GET /api/db -> '+r0.status;
+    }catch(e){ why=String(e.message||e); }
+    const n=cur&&Array.isArray(cur.albums)?cur.albums.length:0;
+    if(!cur||n){
+      console.error(cur
+        ?`\nW chmurze jest już kolekcja (płyty: ${n}, skrzynki: ${(cur.crates||[]).length}). --upload zastąpi ją w całości tym importem — niczego nie dopisuje.`
+        :`\nNie udało się sprawdzić, co jest teraz w chmurze (${why}).`);
+      console.error('Nic nie wysłano. Jeśli tak ma być, uruchom ponownie z --upload --replace.');
+      process.exit(3);
+    }
+  }
 
   // ---- covers must fit what the Worker can serve back; shrink to the budget ----
   let px=400,q=0.7,payload=null;
