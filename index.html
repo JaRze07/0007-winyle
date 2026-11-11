@@ -154,6 +154,7 @@
   .sectlabel{font-size:14px;font-weight:700;color:var(--paper-2);margin:20px 2px 10px}
   .card{background:rgba(255,255,255,.06);border-radius:14px;border:1px solid rgba(255,255,255,.08)}
   .toast{position:fixed;bottom:118px;left:50%;transform:translateX(-50%);background:var(--paper);color:#2a1808;font-weight:600;font-size:15px;padding:12px 20px;border-radius:999px;z-index:80;box-shadow:var(--shadow);animation:fade .2s;max-width:90%;text-align:center}
+  .savewarn{position:fixed;top:0;left:50%;transform:translateX(-50%);width:100%;max-width:500px;z-index:120;background:var(--oxblood);color:#fff;font-size:14px;font-weight:600;line-height:1.4;padding:calc(10px + env(safe-area-inset-top)) 16px 10px;text-align:center}
   .page-h,.lead,.sectlabel,.backlink,.counter,.empty{text-shadow:0 1px 2px rgba(0,0,0,.45)}
   .starrow{display:flex;gap:6px;font-size:28px}
   .star{color:var(--ink-3);cursor:pointer;transition:color .15s}
@@ -250,11 +251,10 @@
 <div id="toastRoot"></div>
 
 <script>
-/* ===== storage ===== */
 /* ===== storage =====
    Online sync via Supabase when configured (CONFIG below), otherwise on-device
    localStorage. Same key/value interface either way. */
-const BUILD=12;                 // bump with sw.js CACHE - shown in Ustawienia
+const BUILD=13;                 // bump with sw.js CACHE - shown in Ustawienia
 const CONFIG={ SUPABASE_URL:'', SUPABASE_KEY:'', CLAUDE_PROXY:'https://winyle-api.winyle-jr.workers.dev/api/claude', WORKER_URL:'https://winyle-api.winyle-jr.workers.dev' };   // SUPABASE_*: online sync · CLAUDE_PROXY: optional smart lookup · WORKER_URL: cloud sync
 const ONLINE=()=>!!(CONFIG.SUPABASE_URL&&CONFIG.SUPABASE_KEY);
 function supaHeaders(extra){ return Object.assign({apikey:CONFIG.SUPABASE_KEY,Authorization:'Bearer '+CONFIG.SUPABASE_KEY},extra||{}); }
@@ -267,8 +267,12 @@ async function sget(k){
   }
   try{ const v=localStorage.getItem(k); return v?JSON.parse(v):null; }catch(e){ return null; }
 }
+/* Resolves to whether the value reached this device's own store. localStorage
+   throws once it is full; callers that hold the collection must not read that
+   as a save (see `saveLocal`). */
 async function sset(k,v){
-  try{ localStorage.setItem(k,JSON.stringify(v)); }catch(e){}
+  let ok=true;
+  try{ localStorage.setItem(k,JSON.stringify(v)); }catch(e){ ok=false; }
   if(ONLINE()){
     try{
       await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/kv`,{method:'POST',
@@ -276,6 +280,7 @@ async function sset(k,v){
         body:JSON.stringify({key:k,value:v})});
     }catch(e){}
   }
+  return ok;
 }
 /* ===== cloud sync (GitHub via Worker) =====
    The cloud copy is a single JSON file the Worker commits to `db/collection.json`
@@ -307,7 +312,22 @@ async function cloudPull(){
   }catch(e){}
   return null;
 }
-async function cloudPush(){
+/* One push at a time, and never an older one after a newer one. Every save fires
+   a push without waiting for it, so a few quick saves (dragging records about,
+   say) used to put several whole-collection POSTs in the air at once, and
+   whichever landed last won - not necessarily the latest. A save made while a
+   push is in flight now waits for it and then sends the collection as it is at
+   that moment; any number of saves in the meantime share that one follow-up. */
+let pushNow=null,pushNext=null;
+function cloudPush(){
+  if(!pushNow){
+    pushNow=sendCollection().finally(()=>{ pushNow=null; });
+    return pushNow;
+  }
+  if(!pushNext) pushNext=pushNow.then(()=>{ pushNext=null; return cloudPush(); });
+  return pushNext;
+}
+async function sendCollection(){
   if(!CONFIG.WORKER_URL) return false;
   try{
     /* Newest first, so if the budget runs out it is the oldest boxes that go
@@ -338,20 +358,74 @@ const coverCache=new Map();
 const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,6);
 function plPly(n){ if(n===1)return'płyta'; const d=n%10,dd=n%100; if(d>=2&&d<=4&&!(dd>=12&&dd<=14))return'płyty'; return'płyt'; }
 
+/* Nothing that comes from outside is trusted to be the shape the app writes. The
+   cloud copy is the obvious case - the Worker takes a POST from anyone - but a
+   hand-edited file or an older build's leftovers get the same treatment: ids
+   become plain tokens (they end up in attributes and selectors), text becomes
+   text, numbers become numbers, a cover is 'local', an http(s) address, an
+   image data URL or nothing. Unknown fields are left alone. Rendering escapes
+   everything as well; this is the second lock, and it is also what stops a
+   rating of a billion from taking the box screen down. */
+const safeId=v=>String(v==null?'':v).replace(/[^\w-]/g,'_');
+function cleanDB(d){
+  const str=v=>v==null?'':String(v);
+  const rows=v=>(Array.isArray(v)?v:[]).filter(x=>x&&typeof x==='object');
+  const crates=rows(d&&d.crates).map(c=>Object.assign(c,{id:safeId(c.id)||uid(),name:str(c.name),closed:!!c.closed}));
+  const albums=rows(d&&d.albums).map(a=>{
+    const cover=str(a.cover);
+    Object.assign(a,{id:safeId(a.id)||uid(),crateId:safeId(a.crateId),
+      position:Math.max(0,Math.round(Number(a.position))||0),
+      artist:str(a.artist),title:str(a.title),genre:str(a.genre),mood:str(a.mood),year:str(a.year),
+      cover:(cover==='local'||/^https?:\/\//i.test(cover)||/^data:image\//i.test(cover))?cover:'',
+      rating:Math.max(0,Math.min(5,Math.round(Number(a.rating))||0))});
+    if(a.pending) a.pending=true; else delete a.pending;
+    if(a.code==null||a.code==='') delete a.code; else a.code=str(a.code);
+    return a;
+  });
+  return {crates,albums};
+}
+function adopt(d){ const c=cleanDB(d); state.crates=c.crates; state.albums=c.albums; }
+
 async function load(){
   const meta=await sget('winyle-meta');
-  if(meta){state.crates=meta.crates||[];state.albums=meta.albums||[];}
+  if(meta) adopt(meta);
   else{
     // try loading from cloud before seeding demo data
     const cloud=await cloudPull();
     if(cloud){
-      state.crates=cloud.crates||[];state.albums=cloud.albums||[];
+      adopt(cloud);
       if(cloud.covers) await restoreCovers(cloud.covers);
-      await sset('winyle-meta',{crates:state.crates,albums:state.albums});
-    } else { seed();await persist(); }
+      await saveLocal();
+    } else {
+      /* Demo records, on this device only. They used to be pushed straight
+         away, and "no cloud copy" is also what a first launch without signal
+         looks like - so a new phone could replace the real collection with the
+         five demo albums before anyone had touched it. */
+      seed(); await saveLocal();
+    }
   }
 }
-async function persist(){ await sset('winyle-meta',{crates:state.crates,albums:state.albums}); cloudPush(); }
+/* The collection is one localStorage key, and localStorage throws when it is
+   full. That used to be swallowed: the screen said "Zapisano" and the change was
+   gone at the next launch. Now a failed write first clears out what an older
+   build left there (covers, which belong in IndexedDB anyway) and tries again,
+   and if it still fails a warning stays on screen until a save succeeds. */
+async function saveLocal(){
+  adopt(state);          // what a lookup handed back is not always a string either
+  const meta={crates:state.crates,albums:state.albums};
+  let ok=await sset('winyle-meta',meta);
+  if(!ok&&await freeLegacyCovers()) ok=await sset('winyle-meta',meta);
+  saveWarn(!ok);
+  return ok;
+}
+function saveWarn(on){
+  let w=document.getElementById('saveWarn');
+  if(!on){ if(w) w.remove(); return; }
+  if(w) return;
+  w=el('<div id="saveWarn" class="savewarn">⚠ Zmiany nie zapisały się na tym telefonie — pamięć przeglądarki jest pełna. Nie zamykaj aplikacji: wejdź w Więcej i wyślij kolekcję do chmury.</div>');
+  document.body.appendChild(w);
+}
+async function persist(){ await saveLocal(); cloudPush(); }
 
 /* ===== cover store =====
    Artwork is the only bulky thing the app keeps, and a packed collection has
@@ -400,11 +474,31 @@ async function saveCover(id,d){
 /* Covers coming back from the cloud are thumbnails, so they may only ever fill a
    gap - never overwrite the full-size photograph the device already holds. */
 async function restoreCovers(covers){
-  for(const [id,d] of Object.entries(covers||{})){
-    if(!d) continue;
+  for(const [key,d] of Object.entries(covers||{})){
+    if(typeof d!=='string'||!/^data:image\//i.test(d)) continue;   // a picture, or nothing
+    const id=safeId(key);
     if(await getCover(id)) continue;
     await saveCover(id,d);
   }
+}
+/* Covers an older build left in localStorage, moved to where covers live now.
+   Normally that happens one at a time as each is first shown; this does the lot,
+   for when the space is needed. One already in IndexedDB is the newer copy and
+   is kept. Returns how many keys were freed. */
+async function freeLegacyCovers(){
+  let freed=0;
+  try{
+    const keys=[];
+    for(let i=0;i<localStorage.length;i++){ const k=localStorage.key(i); if(k&&k.indexOf('winyle-cover-')===0) keys.push(k); }
+    for(const k of keys){
+      const id=k.slice('winyle-cover-'.length);
+      let v=null;
+      try{ v=JSON.parse(localStorage.getItem(k)); }catch(e){}
+      if(v&&!(await idbCover('get','c:'+id))&&!(await idbCover('put','c:'+id,v))) continue;   // nowhere to move it to
+      localStorage.removeItem(k); freed++;
+    }
+  }catch(e){}
+  return freed;
 }
 async function getCover(id){
   if(coverCache.has(id)) return coverCache.get(id);
@@ -496,7 +590,8 @@ function jsonp(url,ms){
     s.onerror=()=>{ if(!done){ cleanup(); res(null); } };
     s.src=url+(url.includes('?')?'&':'?')+'callback='+cb;
     document.body.appendChild(s);
-    setTimeout(()=>{ if(!done){ cleanup(); res(null); } },ms||7000);
+    // a reply that turns up after the timeout still calls its callback - leave it one to call
+    setTimeout(()=>{ if(!done){ done=true; cleanup(); window[cb]=()=>{ try{delete window[cb];}catch(e){} }; res(null); } },ms||7000);
   });
 }
 /* MusicBrainz asks for at most one request per second, and answers 503 "server
@@ -919,7 +1014,7 @@ function openScanner(opt){
       const n=items.length-Math.min(14,items.length)+i+1;
       const thumb=it.data&&it.data.cover?it.data.cover:(it.photo||'');
       const mark=it.status==='ok'?'✓':(it.status==='pending'?'…':(it.status==='ambiguous'?'?':'✗'));
-      return `<div class="bchip ${it.status}" ${thumb?'style="background-image:url(\''+thumb+'\')"':''}>${thumb?'':n}<span class="st">${mark}</span></div>`;
+      return `<div class="bchip ${it.status}" ${thumb?'style="background-image:url(\''+cssUrl(thumb)+'\')"':''}>${thumb?'':n}<span class="st">${mark}</span></div>`;
     }).join('');
     strip.scrollLeft=strip.scrollWidth;
   };
@@ -1074,12 +1169,18 @@ function neighborInfo(a){
   const crate=state.crates.find(c=>c.id===a.crateId);
   return esc(crate?crate.name:'')+'<br><span style="font-family:var(--mono);color:var(--amber)">#'+a.position+'</span> <span style="color:var(--faint)">z '+albs.length+'</span>';
 }
-function usedGenres(){ return [...new Set(state.albums.map(a=>(a.genre||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'pl')); }
-function usedMoods(){ return [...new Set(state.albums.map(a=>(a.mood||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'pl')); }
+function usedGenres(){ return [...new Set(state.albums.map(a=>String(a.genre||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'pl')); }
+function usedMoods(){ return [...new Set(state.albums.map(a=>String(a.mood||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'pl')); }
 function frontAlbum(id){ const a=crateAlbums(id); return a[a.length-1]; }
 function el(html){ const t=document.createElement('template'); t.innerHTML=html.trim(); return t.content.firstChild; }
-function toast(msg){ const r=document.getElementById('toastRoot'); r.innerHTML=''; const t=el('<div class="toast">'+msg+'</div>'); r.appendChild(t); setTimeout(()=>t.remove(),2000); }
-function esc(s){ return (s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function toast(msg){ const r=document.getElementById('toastRoot'); r.innerHTML=''; const t=el('<div class="toast"></div>'); t.textContent=msg; r.appendChild(t); setTimeout(()=>t.remove(),2000); }
+/* Everything that is not the app's own markup goes through here on its way into
+   innerHTML - names, genres, years, artwork addresses. They come from the cloud
+   copy and from other people's databases, and a year is not always a string. */
+function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+/* For a url('…') inside a style attribute: whatever could close the string or
+   the function is percent-encoded first. */
+function cssUrl(u){ return esc(String(u||'').replace(/[\\'"()\s]/g,c=>'%'+c.charCodeAt(0).toString(16).padStart(2,'0'))); }
 async function resolveCover(a){ if(!a||!a.cover)return null; if(a.cover==='local')return await getCover(a.id); return a.cover; }
 function hydrateCovers(scope){
   scope.querySelectorAll('[data-cover],[data-cover-bg]').forEach(async node=>{
@@ -1224,7 +1325,7 @@ function rowHTML(a){
     <span class="handle" data-handle>⋮⋮</span>
     ${a.cover?`<img class="cover" data-cover="${a.id}" alt="">`:`<div class="cover">brak okładki</div>`}
     <div class="info"><b>${esc(a.title)||'Bez tytułu'}</b>
-      <div class="sub">${esc(a.artist)||'Nieznany'} ${a.year?'· '+a.year:''} ${a.genre?'· '+a.genre:''} ${a.rating?'<span class="stars">'+('\u2605'.repeat(a.rating)+'\u2606'.repeat(5-a.rating))+'</span>':''}</div></div>
+      <div class="sub">${esc(a.artist)||'Nieznany'} ${a.year?'· '+esc(a.year):''} ${a.genre?'· '+esc(a.genre):''} ${a.rating?'<span class="stars">'+('\u2605'.repeat(a.rating)+'\u2606'.repeat(5-a.rating))+'</span>':''}</div></div>
     <span class="pos">#${a.position}</span>
   </div>`;
 }
@@ -1252,7 +1353,7 @@ function openEditAlbum(a){
   hydrateCovers(sheet);
   const q=id=>sheet.querySelector(id);
   const setStatus=(m,c)=>{ const s=q('#estatus'); s.textContent=m; s.className='status-line '+(c||''); };
-  const showImg=src=>{ q('#eprev').innerHTML='<img src="'+src+'" alt="">'; };
+  const showImg=src=>{ q('#eprev').innerHTML='<img src="'+esc(src)+'" alt="">'; };
   sheet.querySelectorAll('#emPick .chip').forEach(c=>c.onclick=()=>{
     mood=mood===c.dataset.m?'':c.dataset.m;
     sheet.querySelectorAll('#emPick .chip').forEach(x=>x.classList.toggle('on',x.dataset.m===mood));
@@ -1328,8 +1429,17 @@ function enableDrag(crateId){
 }
 
 /* ===== modals ===== */
+/* A sheet can hold work that exists nowhere else yet - a scanned queue, a
+   half-reviewed import. `modalGuard` lets it object to being closed by a stray
+   tap outside, the ✕ or the back button (return false to stay open);
+   `modalClosed` runs once the sheet is really gone, so background lookups
+   started for it can stop. Both belong to the sheet that set them and go with
+   it. `closeModal(true)` is for the sheet's own "discard" button. */
+let modalGuard=null,modalClosed=null;
+function dropModalHooks(){ const done=modalClosed; modalGuard=modalClosed=null; if(done) done(); }
 function modal(inner){
   const root=document.getElementById('modalRoot');
+  dropModalHooks();
   const scrim=el(`<div class="scrim"><div class="sheet"><button class="sheet-x" id="sheetClose">✕</button>${inner}</div></div>`);
   scrim.addEventListener('click',e=>{if(e.target===scrim)closeModal();});
   scrim.querySelector('#sheetClose').onclick=()=>closeModal();
@@ -1337,7 +1447,12 @@ function modal(inner){
   history.pushState({modal:true},'');
   return scrim.querySelector('.sheet');
 }
-function closeModal(){ document.getElementById('modalRoot').innerHTML=''; }
+function closeModal(force){
+  if(force!==true&&modalGuard&&!modalGuard()) return false;
+  dropModalHooks();
+  document.getElementById('modalRoot').innerHTML='';
+  return true;
+}
 
 function openNewCrate(){
   const sheet=modal(`
@@ -1399,11 +1514,17 @@ function openCapture(crate){
      before raising it: past three the proxy, not the pool, is the limit. */
   const pool=makePool(3);
   let scanner=null;
+  /* The queue lives only in this sheet. Closing the sheet with records still in
+     it used to drop them without a word - one tap outside the sheet was enough -
+     and the lookups already queued carried on calling the proxy for nobody. */
+  let closed=false;
+  modalGuard=()=>!queue.length||confirm('Lista nie jest jeszcze dodana do skrzynki ('+queue.length+' '+plPly(queue.length)+'). Zamknąć i porzucić ją?');
+  modalClosed=()=>{ closed=true; };
 
   function enqueue(item){
     const it=Object.assign({id:uid(),status:'pending',data:null,candidates:[],rating:0,mood:''},item);
     queue.push(it);
-    pool.run(()=>resolveItem(it)).then(()=>{
+    pool.run(()=>closed?it:resolveItem(it)).then(()=>{
       if(scanner) scanner.refresh();
       touchRow(it);
     });
@@ -1601,7 +1722,7 @@ function openCapture(crate){
       onCode:code=>{
         it.kind='barcode'; it.code=code; it.status='pending'; it.data=null; it.candidates=[];
         showReview();
-        pool.run(()=>resolveItem(it)).then(()=>touchRow(it));
+        pool.run(()=>closed?it:resolveItem(it)).then(()=>touchRow(it));
       },
       onCancel:()=>showReview()
     });
@@ -1616,11 +1737,19 @@ function openCapture(crate){
       queueItem:it
     });
   }
+  /* Saving a photographed sleeve is an IndexedDB write, so this function yields
+     between records. A second tap landing in one of those gaps used to run the
+     whole list again and add every record twice - hence the flag, and the list
+     giving way to a spinner so there is nothing left to tap or delete mid-save. */
+  let adding=false;
   async function addAll(){
+    if(adding) return;
+    adding=true;
     const targetId=content().querySelector('#crateSelQ').value;
+    content().innerHTML=`<div class="spin"><div class="ring"></div>Zapisuję…</div>`;
     let pos=crateAlbums(targetId).length;
     let added=0,placeholders=0;
-    for(const it of queue){
+    for(const it of queue.slice()){
       const d=it.data||{};
       const id=uid();
       pos++;
@@ -1638,6 +1767,7 @@ function openCapture(crate){
     await persist();
     addedThisSession+=queue.length;
     queue.length=0;
+    adding=false;
     const qp=sheet.querySelector('#qpill');qp.style.display='flex';
     qp.innerHTML=`<span>📦</span><span>Dodano <b>${addedThisSession}</b> ${plPly(addedThisSession)} w tej sesji</span>`;
     toast(placeholders?`Dodano ${added} · ${placeholders} do uzupełnienia`:`Dodano ${added} ${plPly(added)}`);
@@ -1755,7 +1885,7 @@ function openCapture(crate){
       <div style="text-align:center;padding:10px 0">
         <div style="font-size:22px;font-weight:700">${esc(d.title||'')}</div>
         <div style="font-size:17px;color:var(--paper-2);margin-top:6px">${esc(d.artist||'')}</div>
-        <div style="font-size:15px;color:var(--faint);margin-top:4px">${[d.year,d.genre,d.mood].filter(Boolean).join(' · ')}</div>
+        <div style="font-size:15px;color:var(--faint);margin-top:4px">${esc([d.year,d.genre,d.mood].filter(Boolean).join(' · '))}</div>
         ${d.match?`<div class="srcline">zgodność okładki ${d.match}%</div>`:''}
         ${d.srcs&&d.srcs.length>1?`<div class="srcline">potwierdzone przez: ${d.srcs.join(' + ')}</div>`:''}
       </div>
@@ -1778,8 +1908,11 @@ function openCapture(crate){
     content().querySelector('#editAlbum').onclick=()=>showManualPrefilled(d,coverVal,coverIsLocal);
     // back
     content().querySelector('#backToMethods').onclick=()=>showMethods();
-    // add helper
+    // add helper - resolves to false for a second tap that arrives while the first is still saving
+    let adding=false;
     const doAdd=async()=>{
+      if(adding) return false;
+      adding=true;
       const targetId=(content().querySelector('#crateSel2')||content().querySelector('#crateSel')).value;
       const nextPos=crateAlbums(targetId).length+1;
       const id=uid();
@@ -1792,20 +1925,21 @@ function openCapture(crate){
       const qp=sheet.querySelector('#qpill');qp.style.display='flex';
       qp.innerHTML=`<span>📦</span><span>Dodano <b>${addedThisSession}</b> ${plPly(addedThisSession)} w tej sesji</span>`;
       toast('Dodano · miejsce #'+nextPos+' (przód)');
+      return true;
     };
     // main add button — continue scanning if from barcode
     content().querySelector('#addResult').onclick=async()=>{
-      await doAdd();
+      if(!(await doAdd())) return;
       if(continueScan) doBarcode(); else showMethods();
     };
     // optional "add and stop" button
     const addOnlyBtn=content().querySelector('#addOnly');
-    if(addOnlyBtn) addOnlyBtn.onclick=async()=>{ await doAdd(); showMethods(); };
+    if(addOnlyBtn) addOnlyBtn.onclick=async()=>{ if(await doAdd()) showMethods(); };
   }
 
   /* ---- Manual form ---- */
   function showManual(prefill){
-    let coverVal=null,coverIsLocal=false,mood='',rating=0;
+    let coverVal=null,coverIsLocal=false,mood='',rating=0,saving=false;
     const qItem=prefill&&prefill.queueItem;   // editing a row of the bulk queue
     content().innerHTML=`
       <div id="prev" class="cover-prev"><div class="ph">Zrób zdjęcie lub znajdź album</div></div>
@@ -1831,7 +1965,7 @@ function openCapture(crate){
       if(prefill.year)content().querySelector('#year').value=prefill.year;
       if(prefill.genre)content().querySelector('#genre').value=prefill.genre;
       if(prefill.cover){coverVal=prefill.cover;coverIsLocal=prefill.coverIsLocal||false;
-        content().querySelector('#prev').innerHTML='<img src="'+prefill.cover+'" alt="">';
+        content().querySelector('#prev').innerHTML='<img src="'+esc(prefill.cover)+'" alt="">';
       }
       if(prefill.mood){mood=prefill.mood;
         content().querySelectorAll('#mPick .chip').forEach(x=>x.classList.toggle('on',x.dataset.m===mood));
@@ -1842,7 +1976,7 @@ function openCapture(crate){
     }
 
     const setV=(id,v)=>{if(v){const el=content().querySelector('#'+id);if(el&&!el.value)el.value=v;}};
-    const showImg=src=>{const p=content().querySelector('#prev');p.innerHTML=`<img src="${src}" alt="">`;};
+    const showImg=src=>{const p=content().querySelector('#prev');p.innerHTML=`<img src="${esc(src)}" alt="">`;};
     const showPh=msg=>{content().querySelector('#prev').innerHTML=`<div class="ph">${msg}</div>`;};
     const setStatus=(msg,cls)=>{const s=content().querySelector('#status');s.textContent=msg;s.className='status-line '+(cls||'');};
     const applyData=d=>{setV('artist',d.artist);setV('title',d.title);setV('year',d.year);setV('genre',d.genre);if(d.cover){coverVal=d.cover;coverIsLocal=false;showImg(d.cover);}};
@@ -1927,6 +2061,8 @@ function openCapture(crate){
         qItem.mood=mood; qItem.rating=rating; qItem.status='ok';
         showReview(); return;
       }
+      if(saving) return;                       // a second tap while the cover is still being stored
+      saving=true;
       const targetId=content().querySelector('#crateSel3').value;
       const nextPos=crateAlbums(targetId).length+1;
       const id=uid();
@@ -2318,6 +2454,13 @@ function openImport(){
   let skipped=[];               // files that never became records - always shown, never swallowed
   const caseNames=new Map();    // keyed by the box's first photo, so a re-render keeps it
   const pool=makePool(3);
+  /* Reading a few hundred photos takes minutes, and until `commit` none of it
+     is in the collection - so a tap outside the sheet or the back button asks
+     before throwing it away. And once the sheet is gone, nothing more is read
+     or sent off to be identified. */
+  let saved=false,gone=false;
+  modalGuard=()=>saved||!items.length||confirm('Import nie jest jeszcze dodany do kolekcji — wczytane zdjęcia: '+items.length+'. Zamknąć i porzucić go?');
+  modalClosed=()=>{ idRun=false; gone=true; };
 
   /* ---------- 1. what this does ---------- */
   function showIntro(){
@@ -2355,6 +2498,7 @@ function openImport(){
       <div class="srcline">Zostaw telefon na chwilę — przy stu zdjęciach to potrwa.</div>`;
     let i=0;
     for(const f of files){
+      if(gone) return;                                // the sheet was closed mid-read
       /* A photo that quietly fails to arrive is the worst thing that can happen
          here: every record behind it in the box moves up a slot and nothing says
          so. Both ways a file can fall out are collected and shown instead. */
@@ -2380,6 +2524,7 @@ function openImport(){
       draw(++i);
       await new Promise(r=>setTimeout(r,0));          // let the progress bar actually paint
     }
+    if(gone) return;
     items.sort(byCaptureOrder);
     if(!items.length){
       body().innerHTML=`<div class="spin">Nie udało się odczytać żadnego zdjęcia</div>
@@ -2511,7 +2656,7 @@ function openImport(){
     touchProgress();
     body().querySelector('#impFlip').onclick=()=>{ frontFirst=!frontFirst; showReview(); };
     body().querySelector('#impGo').onclick=()=>commit();
-    body().querySelector('#impCancel').onclick=e=>{e.preventDefault();idRun=false;closeModal();};
+    body().querySelector('#impCancel').onclick=e=>{e.preventDefault();closeModal(true);};   // asked for by name - no second question
   }
   function dividerRow(sp){
     const c=sp.stats?sp.stats.mean:[0,0,0];
@@ -2589,6 +2734,7 @@ function openImport(){
     idRun=false;
     const cs=cases();
     if(!cs.length){ toast('Nie ma czego dodać'); return; }
+    saved=true;
     body().innerHTML=`<div class="spin"><div class="ring"></div>Zapisuję…</div>`;
     let recs=0,placeholders=0;
     cs.forEach((photos,ci)=>{
@@ -2608,7 +2754,7 @@ function openImport(){
     });
     // the photographs themselves, full size, on the device
     for(const it of items){ if(!it.sep) await saveCover(it.id,it.cover); }
-    await sset('winyle-meta',{crates:state.crates,albums:state.albums});
+    await saveLocal();
     const synced=await cloudPush();
     const s=lastSync||{};
     body().innerHTML=`
@@ -2637,14 +2783,14 @@ function openCloseSummary(crate){
     <div id="sumList">${albums.map(a=>`
       <div class="row" style="margin-bottom:9px">
         ${a.cover?`<img class="cover" data-cover="${a.id}" alt="">`:`<div class="cover">brak okładki</div>`}
-        <div class="info"><b>${esc(a.title)||'Bez tytułu'}</b><div class="sub">${esc(a.artist)} ${a.genre?'· '+a.genre:''}</div></div>
+        <div class="info"><b>${esc(a.title)||'Bez tytułu'}</b><div class="sub">${esc(a.artist)} ${a.genre?'· '+esc(a.genre):''}</div></div>
         <span class="pos">#${a.position}</span>
       </div>`).join('')}</div>
     <button class="btn" id="seal" style="margin-top:12px">Zamknij skrzynkę ✓</button>
     <button class="btn ghost" id="keepOpen" style="margin-top:10px">Pakuj dalej</button>`);
   hydrateCovers(sheet);
   sheet.querySelector('#seal').onclick=async()=>{crate.closed=true;await persist();closeModal();render();toast('Skrzynka zamknięta 📦');};
-  sheet.querySelector('#keepOpen').onclick=closeModal;
+  sheet.querySelector('#keepOpen').onclick=()=>closeModal();
 }
 async function reopenCrate(c){ c.closed=false; await persist(); renderCrateDetail(); }
 
@@ -2655,9 +2801,9 @@ function renderListen(){
   m.innerHTML=`<h2 class="page-h">Czego posłuchać</h2>
     <p class="lead">Wybierz filtry, potem przesuwaj w lewo i prawo — po jednej płycie. Pod każdą okładką jest skrzynka i miejsce.</p>
     <div class="sectlabel">Gatunek</div>
-    <div class="chiprow" id="lg">${['Dowolny',...usedGenres()].map(g=>`<span class="chip ${(g==='Dowolny'&&!listenFilters.genre)||listenFilters.genre===g?'on':''}" data-lg="${g==='Dowolny'?'':g}">${g}</span>`).join('')}</div>
+    <div class="chiprow" id="lg">${['Dowolny',...usedGenres()].map(g=>`<span class="chip ${(g==='Dowolny'&&!listenFilters.genre)||listenFilters.genre===g?'on':''}" data-lg="${g==='Dowolny'?'':esc(g)}">${esc(g)}</span>`).join('')}</div>
     <div class="sectlabel">Nastrój / tempo</div>
-    <div class="chiprow" id="lm" style="margin-bottom:22px">${['Dowolny',...usedMoods()].map(g=>`<span class="chip ${(g==='Dowolny'&&!listenFilters.mood)||listenFilters.mood===g?'on':''}" data-lm="${g==='Dowolny'?'':g}">${g}</span>`).join('')}</div>
+    <div class="chiprow" id="lm" style="margin-bottom:22px">${['Dowolny',...usedMoods()].map(g=>`<span class="chip ${(g==='Dowolny'&&!listenFilters.mood)||listenFilters.mood===g?'on':''}" data-lm="${g==='Dowolny'?'':esc(g)}">${esc(g)}</span>`).join('')}</div>
     <button class="btn" id="startDeck">Pokaż płyty ◎</button>`;
   m.querySelectorAll('[data-lg]').forEach(c=>c.onclick=()=>{listenFilters.genre=c.dataset.lg;renderListen();});
   m.querySelectorAll('[data-lm]').forEach(c=>c.onclick=()=>{listenFilters.mood=c.dataset.lm;renderListen();});
@@ -2671,7 +2817,7 @@ function cardInner(a){
   const crate=state.crates.find(c=>c.id===a.crateId);
   return `<div class="art" ${a.cover?`data-cover-bg="${a.id}"`:''}>${a.cover?'':'brak okładki'}</div>
     <div class="meta"><b>${esc(a.title)||'Bez tytułu'}</b>
-      <div class="sub muted">${esc(a.artist)} ${a.year?'· '+a.year:''} · ${a.genre||'—'}</div>
+      <div class="sub muted">${esc(a.artist)} ${a.year?'· '+esc(a.year):''} · ${esc(a.genre)||'—'}</div>
       ${a.rating?'<div class="stars" style="margin-top:4px">'+('\u2605'.repeat(a.rating)+'\u2606'.repeat(5-a.rating))+'</div>':''}
       <div class="loc-box">${neighborInfo(a)}</div>
     </div>`;
@@ -2758,7 +2904,7 @@ function openAlbumDetail(a){
   }
   if(visStart>0) posVisual='<div style="text-align:center;color:var(--faint);font-size:13px;padding:4px">\u27F5 ty\u0142 skrzynki</div>'+posVisual;
   if(visEnd<albs.length) posVisual+='<div style="text-align:center;color:var(--faint);font-size:13px;padding:4px">prz\u00F3d skrzynki \u27F6</div>';
-  const sheet=modal('<div class="cover-prev" style="height:240px;border-radius:16px">'+(a.cover?'<img data-cover="'+a.id+'" alt="">':'<div class="ph" style="font-size:40px">\u266A</div>')+'</div><div style="text-align:center;padding:14px 0 6px"><div style="font-family:var(--disp);font-size:24px;font-weight:800;line-height:1.2">'+(esc(a.title)||'Bez tytu\u0142u')+'</div><div style="font-size:18px;color:var(--paper-2);margin-top:6px">'+(esc(a.artist)||'Nieznany')+'</div><div style="font-size:16px;color:var(--faint);margin-top:4px">'+(a.year||'')+' '+(a.genre?'\u00B7 '+a.genre:'')+' '+(a.mood?'\u00B7 '+a.mood:'')+'</div>'+(a.rating?'<div class="stars" style="font-size:20px;margin-top:8px">'+('\u2605'.repeat(a.rating)+'\u2606'.repeat(5-a.rating))+'</div>':'')+'</div><div class="card" style="padding:14px;margin:10px 0"><div style="font-weight:700;font-size:15px;margin-bottom:10px">\uD83D\uDCE6 '+esc(crate?crate.name:'')+' \u2014 miejsce #'+a.position+' z '+total+'</div><div style="display:flex;flex-direction:column;gap:4px">'+posVisual+'</div></div><button class="btn ghost" id="goToCrate" style="width:100%;margin-top:6px">Otw\u00F3rz skrzynk\u0119</button><button class="btn ghost" id="editThis" style="width:100%;margin-top:8px">\u270F\uFE0F Edytuj p\u0142yt\u0119</button>');
+  const sheet=modal('<div class="cover-prev" style="height:240px;border-radius:16px">'+(a.cover?'<img data-cover="'+a.id+'" alt="">':'<div class="ph" style="font-size:40px">\u266A</div>')+'</div><div style="text-align:center;padding:14px 0 6px"><div style="font-family:var(--disp);font-size:24px;font-weight:800;line-height:1.2">'+(esc(a.title)||'Bez tytu\u0142u')+'</div><div style="font-size:18px;color:var(--paper-2);margin-top:6px">'+(esc(a.artist)||'Nieznany')+'</div><div style="font-size:16px;color:var(--faint);margin-top:4px">'+esc(a.year)+' '+(a.genre?'\u00B7 '+esc(a.genre):'')+' '+(a.mood?'\u00B7 '+esc(a.mood):'')+'</div>'+(a.rating?'<div class="stars" style="font-size:20px;margin-top:8px">'+('\u2605'.repeat(a.rating)+'\u2606'.repeat(5-a.rating))+'</div>':'')+'</div><div class="card" style="padding:14px;margin:10px 0"><div style="font-weight:700;font-size:15px;margin-bottom:10px">\uD83D\uDCE6 '+esc(crate?crate.name:'')+' \u2014 miejsce #'+a.position+' z '+total+'</div><div style="display:flex;flex-direction:column;gap:4px">'+posVisual+'</div></div><button class="btn ghost" id="goToCrate" style="width:100%;margin-top:6px">Otw\u00F3rz skrzynk\u0119</button><button class="btn ghost" id="editThis" style="width:100%;margin-top:8px">\u270F\uFE0F Edytuj p\u0142yt\u0119</button>');
   hydrateCovers(sheet);
   sheet.querySelector('#goToCrate').onclick=()=>{closeModal();state.tab='crates';state.crateId=a.crateId;render();};
   sheet.querySelector('#editThis').onclick=()=>{closeModal();openEditAlbum(a);};
@@ -2774,13 +2920,13 @@ function renderSearch(){
   });
   m.innerHTML=`<h2 class="page-h">Szukaj w kolekcji</h2>
     <div class="searchbar"><span class="si">⌕</span><input id="sq" placeholder="Wykonawca, album, gatunek…" value="${esc(searchQ)}" autocomplete="off"></div>
-    <div class="chiprow" style="margin-bottom:6px">${['Wszystkie',...usedGenres()].map(g=>`<span class="chip ${(g==='Wszystkie'&&!searchGenre)||searchGenre===g?'on':''}" data-sg="${g==='Wszystkie'?'':g}">${g}</span>`).join('')}</div>
+    <div class="chiprow" style="margin-bottom:6px">${['Wszystkie',...usedGenres()].map(g=>`<span class="chip ${(g==='Wszystkie'&&!searchGenre)||searchGenre===g?'on':''}" data-sg="${g==='Wszystkie'?'':esc(g)}">${esc(g)}</span>`).join('')}</div>
     <div class="sectlabel">${results.length} ${plPly(results.length)}</div>
     <div id="sres">${results.length?results.map(a=>{
       const crate=state.crates.find(c=>c.id===a.crateId);
       return `<div class="row" data-go="${a.id}">
         ${a.cover?`<img class="cover" data-cover="${a.id}" alt="">`:`<div class="cover">brak okładki</div>`}
-        <div class="info"><b>${esc(a.title)||'Bez tytułu'}</b><div class="sub">${esc(a.artist)} ${a.genre?'· '+a.genre:''} ${a.rating?'<span class="stars">'+('\u2605'.repeat(a.rating)+'\u2606'.repeat(5-a.rating))+'</span>':''}</div></div>
+        <div class="info"><b>${esc(a.title)||'Bez tytułu'}</b><div class="sub">${esc(a.artist)} ${a.genre?'· '+esc(a.genre):''} ${a.rating?'<span class="stars">'+('\u2605'.repeat(a.rating)+'\u2606'.repeat(5-a.rating))+'</span>':''}</div></div>
         <div style="text-align:right;min-width:100px">
           <div class="res-loc">${neighborInfo(a)}</div>
         </div>
@@ -2834,15 +2980,30 @@ function renderSettings(){
     st.textContent='Pobieranie…'; st.style.color='var(--amber)';
     const cloud=await cloudPull();
     if(cloud){
-      state.crates=cloud.crates||[];state.albums=cloud.albums||[];
+      adopt(cloud);
       if(cloud.covers) await restoreCovers(cloud.covers);
-      await sset('winyle-meta',{crates:state.crates,albums:state.albums});
-      st.textContent='✓ Pobrano '+state.albums.length+' płyt'; st.style.color='var(--keep)';
+      await saveLocal();
+      if(state.tab==='settings') renderSettings();       // the counts on this screen were the old collection's
+      const s2=document.getElementById('syncStatus');
+      if(s2){ s2.textContent='✓ Pobrano '+state.albums.length+' '+plPly(state.albums.length); s2.style.color='var(--keep)'; }
     } else { st.textContent='✗ Brak danych w chmurze lub błąd'; st.style.color='var(--oxblood)'; }
   };
   m.querySelector('#updateApp').onclick=async()=>{
     const st=m.querySelector('#updateStatus');
-    st.textContent='Wysyłanie danych do chmury…'; st.style.color='var(--amber)';
+    /* Everything below throws the offline copy away and reloads. Without a
+       connection that leaves nothing to reload from - the app would not open
+       again until the phone is back online - so make sure the server answers
+       before touching the cache. */
+    st.textContent='Sprawdzam połączenie…'; st.style.color='var(--amber)';
+    try{
+      const probe=await fetch('sw.js?t='+Date.now(),{cache:'no-store'});
+      if(!probe.ok) throw new Error('http '+probe.status);
+    }catch(e){
+      st.textContent='✗ Brak połączenia — aktualizacja jest możliwa tylko online. Nic nie zostało zmienione.';
+      st.style.color='var(--oxblood)';
+      return;
+    }
+    st.textContent='Wysyłanie danych do chmury…';
     await cloudPush();
     st.textContent='Czyszczenie cache…';
     if('serviceWorker' in navigator){
@@ -2858,7 +3019,10 @@ function renderSettings(){
 
 /* ===== back button support ===== */
 window.addEventListener('popstate',()=>{
-  if(document.getElementById('modalRoot').innerHTML){closeModal();}
+  if(document.getElementById('modalRoot').innerHTML){
+    // the sheet refused (unsaved queue) - put back the history entry this press used up
+    if(!closeModal()) history.pushState({modal:true},'');
+  }
   else if(state.crateId){state.crateId=null;render();}
 });
 

@@ -11,15 +11,45 @@
   aplikacja → Skrzynki → **Import ze zdjęć** → zaznacz wszystkie zdjęcia. Sprawdź w podglądzie, czy przekładki
   podzieliły skrzynki tam, gdzie powinny, i czy pierwsze zdjęcie w skrzynce to przód; dopiero potem „Dodaj".
   Zdjęć nie trzeba nigdzie wysyłać — import działa na telefonie, Dysk nie jest do niczego potrzebny.
-- Zbuduj APK: workflow **Android APK** (tag `v1.1` albo ręcznie z Actions) i zainstaluj z Releases;
-  starą wersję Winyli trzeba najpierw odinstalować (nowy klucz podpisu)
+- **Zainstaluj APK z Releases** (`winyle.apk`, v1.1 — zbudowany 2026-10-16, patrz Done); starą wersję Winyli
+  trzeba najpierw odinstalować (nowy klucz podpisu). Przy odinstalowaniu Chrome może skasować dane strony,
+  a aplikacja bez danych pobiera przy pierwszym uruchomieniu kolekcję z chmury — więc najpierw w starej wersji
+  Więcej → „Wyślij do chmury" i sprawdź, że w `db/collection.json` jest to, co ma być
+- **Sprawdź wersję 13 na telefonie** (po pushu): Więcej → na dole „Wersja 13". Dwie rzeczy, których nie da się
+  sprawdzić bez telefonu: (1) w pakowaniu seryjnym zeskanuj 2-3 płyty, wróć „Gotowe" i dotknij obok arkusza albo
+  wciśnij wstecz — ma paść pytanie „Lista nie jest jeszcze dodana… Zamknąć i porzucić ją?" (systemowe okienko;
+  w Chrome/TWA powinno działać, nie sprawdzone na urządzeniu); (2) tryb samolotowy → zamknij i otwórz aplikację —
+  ma się otworzyć z pamięci
 - **Worker: przenieś bazę z gita na KV/R2.** Zmierzone: Worker oddaje `/api/db` tylko do ~1 MB (powyżej GET 500),
   a każdy zapis to nowy commit z całym plikiem. Dlatego klient trzyma pełne okładki lokalnie, a do chmury wysyła
   miniatury w limicie 500 kB, i pull ma zapas przez `raw.githubusercontent.com`. To obejście, nie rozwiązanie
 - Put the Cloudflare Worker source into the repo and redeploy via wrangler (needed for the KV/R2 move above)
-- Add auth to `POST /api/db` (anyone with the Worker URL can write)
+- **Worker jest otwarty dla każdego, a jego adres jest publiczny** (stoi w `index.html` w publicznym repo, więc
+  „dopóki adres jest prywatny" nigdy nie było prawdą). `POST /api/db` bez autoryzacji = każdy może podmienić
+  kolekcję; `/api/claude` bez autoryzacji = każdy może wydawać klucz Anthropic. Aplikacja od wersji 13 traktuje
+  kopię z chmury jako niezaufaną (czyści i escapuje), więc podmiana nie uruchomi już kodu na telefonie, ale samej
+  podmianie i zużyciu klucza zapobiegnie tylko Worker: sprawdzanie `Origin` + limit zapytań na `/api/claude`,
+  a na `/api/db` sekret albo logowanie. Do tego czasu warto ustawić limit wydatków na kluczu Anthropic
+- **Synchronizacja to „ostatni zapis wygrywa"** — bez scalania i bez numeru wersji. Telefon, który ma już kolekcję,
+  nigdy sam nie pobiera; wysyła po każdym zapisie i nadpisuje chmurę. Dwa urządzenia na zmianę nadpisują się
+  nawzajem, a `tools/shelf-import --upload` jest widoczny na telefonie dopiero po „Pobierz z chmury". Jedyne
+  „cofnij" to historia `db/collection.json`. Prawdziwa poprawka idzie razem z KV/R2: numer rewizji w Workerze
+  i odmowa zapisu na starszej. Decyzja Jacka, czy to potrzebne przy jednym telefonie
+- **Do decyzji (nie zmieniane, bo to zachowanie aplikacji):** (a) „Pobierz z chmury" zastępuje skrzynki i płyty
+  na telefonie bez pytania — dodać potwierdzenie? (b) „Dodaj wszystkie", gdy część pozycji jest jeszcze „w toku",
+  zapisuje je jako puste miejsca do uzupełnienia i wynik rozpoznawania przepada — blokować przycisk do końca?
+  (c) „Usuń płytę" nie pyta o potwierdzenie (usunięcie skrzynki pyta)
+- `db/collection.json` zawiera teraz pięć płyt demo z testowych wysyłek z 2026-10-16/17, w dodatku z podwójnie
+  zakodowanymi polskimi znakami („wieczÃ³r"; wysyłka z 2026-09-13 była zakodowana poprawnie, więc to raczej wina
+  tego, czym wysyłano w październiku, niż Workera — nie sprawdzone, źródła Workera nie ma w repo). Plik zostanie
+  zastąpiony przy pierwszym prawdziwym zapisie z telefonu; jeśli polskie znaki dalej będą zepsute, to Worker
 - Add the Discogs barcode route to the Worker
-- Add spec-kit scaffold
+- spec-kit: szkielet jest w repo (`.specify/`, 2026-09-27), ale `constitution.md` to wciąż pusty szablon i nie ma
+  żadnego `specs/` — wypełnić przy pierwszej większej funkcji
+- Drobne, znane: okładki usuniętych płyt zostają w IndexedDB (nic ich nie sprząta); każde otwarcie arkusza
+  dokłada wpis historii, więc „wstecz" po zamknięciu arkusza krzyżykiem wychodzi ze skrzynki; listy renderują
+  pełne okładki 600 px także w miniaturach (przy kilkuset płytach może być ciężko na telefonie — zmierzyć);
+  strona jest „network-first" bez limitu czasu, więc przy bardzo słabym zasięgu start czeka na sieć
 
 ## Specification
 
@@ -52,9 +82,50 @@ the surface the records lie on is dropped, so a last square holding two records 
 Everything is reviewed at the end; unidentified items can still be added as placeholders that hold their slot.
 Phones without `BarcodeDetector`/camera fall back to the previous one-shot file-input split.
 
+**Dane z zewnątrz są niezaufane** (2026-11-11). Kopia w chmurze (każdy może ją zapisać) i odpowiedzi baz/modelu
+przechodzą przez `cleanDB` przy wczytaniu, pobraniu i każdym zapisie, a wszystko, co trafia do `innerHTML`,
+przez `esc`. Zapis kolekcji na telefonie nie może się nie udać po cichu: nieudany zapis zwalnia miejsce po starych
+okładkach i próbuje ponownie, a jeśli dalej się nie da, czerwony pasek zostaje do pierwszego udanego zapisu.
+Arkusz z niezapisaną pracą (kolejka skanowania, import przed „Dodaj") pyta przed zamknięciem.
+
+**Synchronizacja**: telefon jest źródłem prawdy i wysyła po każdym zapisie, po jednej wysyłce naraz; nowe urządzenie
+pobiera raz, a dane demo nigdy nie są wysyłane same z siebie. Bez scalania — patrz Pending.
+
+**Offline**: `sw.js` trzyma kopię aplikacji; strona idzie najpierw z sieci, ale tylko poprawna odpowiedź zastępuje
+kopię, a bez sieci albo przy błędzie hostingu otwiera się kopia. `CACHE` (sw.js) i `BUILD` (index.html) rosną razem.
+
+**Testy**: `node tools/smoke-test/run.js` (Playwright, 49 sprawdzeń, nie dotyka prawdziwego Workera) oraz
+`node tools/shelf-import/check-engine.js` (silnik importu w terminalu = funkcje aplikacji, 14/14).
+
 Full description and setup: `README.md` in this repo.
 
 ## Done
+
+- Done 2026-11-11: **przegląd całości: bezpieczeństwo, utrata danych, service worker** (wersja 13, `winyle-v13`).
+  - Bezpieczeństwo: gatunek, rok, nastrój, adresy okładek i identyfikatory z kopii w chmurze trafiały do
+    `innerHTML` bez escapowania — a chmurę może zapisać każdy, kto zna adres Workera (jest w publicznym repo).
+    Podstawiona kolekcja uruchamiała kod na telefonie (potwierdzone testem na starej wersji), a ocena `1e9`
+    wywracała ekran skrzynki. Teraz `cleanDB` + `esc` wszędzie; `toast` przyjmuje tekst.
+  - Utrata danych: (1) nowe urządzenie bez zasięgu zakładało dane demo **i wysyłało je do chmury**, nadpisując
+    prawdziwą kolekcję — demo zostaje już tylko lokalnie; (2) pełny `localStorage` był połykany („Zapisano", a po
+    restarcie zmian nie ma) — teraz przenosi stare okładki do IndexedDB i ponawia, a w razie porażki ostrzega;
+    (3) dotknięcie obok arkusza / wstecz wyrzucało całą zeskanowaną kolejkę albo wczytany import bez pytania,
+    a rozpoznawanie w tle leciało dalej do proxy — teraz pyta i zatrzymuje; (4) podwójne dotknięcie „Dodaj
+    wszystkie" (i „Dodaj do skrzynki") przy okładkach ze zdjęć dodawało każdą płytę dwa razy; (5) kilka szybkich
+    zapisów wysyłało kilka równoległych POST-ów i wygrywał ten, który doszedł ostatni — wysyłki idą po kolei;
+    (6) „Pobierz najnowszą wersję" bez sieci kasowało cache i aplikacja nie otwierała się do powrotu zasięgu.
+  - Service worker: strona z błędem hostingu (5xx/404) zapisywała się w cache zamiast aplikacji i to ją pokazywał
+    offline; adres startowy z `?…` nie trafiał w cache; precache mógł wziąć starą wersję z cache HTTP. Naprawione.
+  - `tools/shelf-import`: `--upload` zastępował całą kolekcję w chmurze bez ostrzeżenia — teraz najpierw
+    sprawdza i wymaga `--replace`; z User-Agenta zniknął prywatny adres e-mail; brakowało `package-lock.json`,
+    więc `npm ci` z README nie działało; doszedł `check-engine.js`.
+  - Testy w repo: `tools/smoke-test/run.js` — przed zmianami 12 z 35 sprawdzeń przechodziło, po zmianach 49/49;
+    przejście ze starej wersji (v12 → v13) sprawdzone osobno: dane zostają, stary cache znika.
+  - Sekrety: w drzewie i w dostępnej historii nie ma kluczy ani tokenów; jedyna dana osobowa to wspomniany e-mail
+    (zostaje w historii gita w `tools/shelf-import/run.js`). Wbudowane tło JPEG nie ma EXIF.
+  - Dokumentacja: README (synchronizacja, offline, testy, nieaktualne fragmenty), CLAUDE.md (mapa plików, zasady,
+    wycofany `docsync`), STATUS. „Add spec-kit scaffold" zdjęte z Pending — szkielet jest od 2026-09-27.
+  - Nie sprawdzone tutaj: telefon (aparat, okienko potwierdzenia w TWA) i żywy Worker (sieć zablokowana).
 
 - Done 2026-10-16: **import całej kolekcji ze zdjęć + aplikacja na Androida.**
   - `index.html`: silnik importu (`captureTime`/`exifFromBuffer` - własny parser EXIF, `frameStats`/`classifyFrame`

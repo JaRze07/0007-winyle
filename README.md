@@ -88,6 +88,37 @@ them, newest first, inside a fixed budget. Two measured reasons for that:
 Settings shows what reached the cloud after each sync. The real fix is to move
 the Worker's store off git — see `STATUS.md`.
 
+What sync is, and is not:
+
+- **The phone's own copy is the collection.** A device that already has one
+  never pulls by itself; it pushes after every save, one push at a time, and the
+  cloud simply holds whatever was pushed last. *Więcej → Pobierz z chmury*
+  replaces the device's boxes and records with the cloud copy (full-size covers
+  already on the device are kept).
+- **A new device pulls once**, on first launch. If there is nothing to pull — or
+  no signal — it starts with five demo records, and those stay on that device
+  until you change something: demo data is never pushed on its own, because
+  "nothing to pull" and "no signal" look the same and the push would replace the
+  real collection.
+- There is no merging. Two devices editing in turn overwrite each other, last
+  save wins. Every push is a commit to `db/collection.json`, so an overwritten
+  collection can be dug out of that file's history.
+- The Worker takes a `POST /api/db` from anyone, and its address is in this
+  public repo. The app therefore treats the cloud copy as untrusted text (it is
+  cleaned on the way in and escaped on the way to the screen), but it cannot stop
+  someone replacing it — see `STATUS.md`.
+- If the device's own store fills up, a red bar says so and stays until a save
+  succeeds; nothing is reported as saved that was not.
+
+## Offline
+
+`sw.js` keeps a copy of the app so it opens without a connection. The page is
+fetched from the network first (a deploy shows up on the next launch) and only a
+good answer replaces the stored copy; with no network, or an error from the host,
+the stored copy opens instead. *Pobierz najnowszą wersję* checks that the server
+answers before it clears anything. `CACHE` in `sw.js` and `BUILD` in `index.html`
+are bumped together whenever either file changes.
+
 ## Android app
 
 `winyle.apk` on the [Releases page](https://github.com/JaRze07/0007-winyle/releases)
@@ -145,8 +176,10 @@ By default data is stored on-device (browser `localStorage`). To sync online:
    ```
 
 Data is written to `localStorage` (fast/offline) and mirrored to Supabase when
-configured, so the app keeps working offline and syncs when online. Cover images
-are stored as part of the data (base64 for photos, URLs for fetched art).
+configured, so the app keeps working offline and syncs when online. Fetched
+artwork is stored in the data as a URL; photographed covers live in the device's
+IndexedDB and are not mirrored to Supabase. This path is not in use — the live
+app syncs through the Worker.
 
 > The schema's policies give the anon key full read/write — fine for a private
 > personal app. Add Supabase Auth + per-user policies before exposing it publicly.
@@ -198,7 +231,7 @@ export default {
 
 ## Push this to GitHub
 
-Create an empty repo named **winyle** on GitHub first (github.com → New repository,
+Create an empty repo named **0007-winyle** on GitHub first (github.com → New repository,
 no README), then from this folder:
 
 ```bash
@@ -210,8 +243,27 @@ git remote add origin https://github.com/JaRze07/0007-winyle.git
 git push -u origin main
 ```
 
+## Checks
+
+There is no build and no test framework, but two things can be run:
+
+```bash
+node tools/smoke-test/run.js          # the app in headless Chromium (needs the `playwright` package)
+node tools/shelf-import/check-engine.js   # the terminal import still shares the app's engine
+```
+
+The smoke test serves this folder locally under `/0007-winyle/`, answers or blocks
+every outside request itself (it never reaches the live Worker) and checks the
+things that can go wrong without a camera: a clean start, hostile text in the
+cloud copy, a full device store, a double tap, a stray tap on a full queue, the
+photo import, push ordering, and the service worker offline. The camera needs a
+phone.
+
 ## Files
 
 - `index.html` — the whole app (UI + logic + storage)
 - `manifest.json`, `sw.js`, `icon-192.png`, `icon-512.png` — PWA (installable, offline shell)
-- `schema.sql` — Supabase/Postgres table for the online database
+- `db/collection.json` — the cloud copy of the collection, committed by the Worker (not by hand)
+- `android-twa/`, `.github/workflows/android-release.yml`, `.well-known/assetlinks.json` — the Android shell
+- `tools/shelf-import/` — the photo import run from a terminal · `tools/smoke-test/` — browser checks
+- `schema.sql` — Supabase/Postgres table for the optional online database (unused)
