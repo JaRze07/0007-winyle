@@ -23,7 +23,8 @@
 - **Worker: przenieś bazę z gita na KV/R2.** Zmierzone: Worker oddaje `/api/db` tylko do ~1 MB (powyżej GET 500),
   a każdy zapis to nowy commit z całym plikiem. Dlatego klient trzyma pełne okładki lokalnie, a do chmury wysyła
   miniatury w limicie 500 kB, i pull ma zapas przez `raw.githubusercontent.com`. To obejście, nie rozwiązanie
-- Put the Cloudflare Worker source into the repo and redeploy via wrangler (needed for the KV/R2 move above)
+- **Jacek (yes/no): a copy of the Worker source turned up on the PC** (2026-11-12): `C:\JR77\_legacy\winyle\worker\index.js` with its `wrangler.toml` (`winyle-api`), dated 24 June 2026, from the old standalone folder where `worker/` was git-ignored. It holds no secrets (keys come from the Worker's environment). It confirms the item below: `Access-Control-Allow-Origin: *`, no check on `/api/claude` or on `POST /api/db`. It still names the repo `JaRze07/winyle`, so whether it is exactly what runs on Cloudflare today is not known. Say **yes** and I commit it as `worker/`, add the `Origin` check, a request limit and a write secret, and prepare the wrangler deploy for you to run (it needs your `wrangler login`)
+- **Jacek (decision): a personal e-mail address is in this public repository's history** (in an old User-Agent string; already gone from the current files). Removing it means rewriting history and force-pushing. Say **rewrite**, **make the repo private**, or **leave it**
 - **Worker jest otwarty dla każdego, a jego adres jest publiczny** (stoi w `index.html` w publicznym repo, więc
   „dopóki adres jest prywatny" nigdy nie było prawdą). `POST /api/db` bez autoryzacji = każdy może podmienić
   kolekcję; `/api/claude` bez autoryzacji = każdy może wydawać klucz Anthropic. Aplikacja od wersji 13 traktuje
