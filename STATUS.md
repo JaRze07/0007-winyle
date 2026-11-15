@@ -24,7 +24,6 @@
   a każdy zapis to nowy commit z całym plikiem. Dlatego klient trzyma pełne okładki lokalnie, a do chmury wysyła
   miniatury w limicie 500 kB, i pull ma zapas przez `raw.githubusercontent.com`. To obejście, nie rozwiązanie
 - **Jacek (yes/no): a copy of the Worker source turned up on the PC** (2026-11-12): `C:\JR77\_legacy\winyle\worker\index.js` with its `wrangler.toml` (`winyle-api`), dated 24 June 2026, from the old standalone folder where `worker/` was git-ignored. It holds no secrets (keys come from the Worker's environment). It confirms the item below: `Access-Control-Allow-Origin: *`, no check on `/api/claude` or on `POST /api/db`. It still names the repo `JaRze07/winyle`, so whether it is exactly what runs on Cloudflare today is not known. Say **yes** and I commit it as `worker/`, add the `Origin` check, a request limit and a write secret, and prepare the wrangler deploy for you to run (it needs your `wrangler login`)
-- **Jacek (decision): a personal e-mail address is in this public repository's history** (in an old User-Agent string; already gone from the current files). Removing it means rewriting history and force-pushing. Say **rewrite**, **make the repo private**, or **leave it**
 - **Worker jest otwarty dla każdego, a jego adres jest publiczny** (stoi w `index.html` w publicznym repo, więc
   „dopóki adres jest prywatny" nigdy nie było prawdą). `POST /api/db` bez autoryzacji = każdy może podmienić
   kolekcję; `/api/claude` bez autoryzacji = każdy może wydawać klucz Anthropic. Aplikacja od wersji 13 traktuje
@@ -101,6 +100,12 @@ kopię, a bez sieci albo przy błędzie hostingu otwiera się kopia. `CACHE` (sw
 Full description and setup: `README.md` in this repo.
 
 ## Done
+
+- Done 2026-11-15: **e-mail address removed from the git history** (Jacek: rewrite). `git filter-repo --replace-text`
+  swapped it for `https://github.com/JaRze07/0007-winyle` in the User-Agent of `tools/shelf-import/run.js` in the one
+  commit that had it, and `main` was force-pushed: `83c9768 d199413 28be62f c8bd1a8` are now `64bfdff 0ea66ba e95604e
+  805a43f` (messages, authors, dates unchanged; the GitHub signatures on the middle two dropped; head tree identical;
+  89 commits; tags `v1.0.0`/`v1.1` untouched). Old SHAs stay viewable on GitHub until GitHub Support purges them.
 
 - Done 2026-11-11: **przegląd całości: bezpieczeństwo, utrata danych, service worker** (wersja 13, `winyle-v13`).
   - Bezpieczeństwo: gatunek, rok, nastrój, adresy okładek i identyfikatory z kopii w chmurze trafiały do
